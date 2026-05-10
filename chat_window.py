@@ -328,14 +328,30 @@ class ChatWindow:
             threading.Thread(target=_run, daemon=True).start()
             return
 
+        if cmd == '/how-am-i-doing':
+            try:
+                import audit_reader
+                days = 7
+                for a in args:
+                    if a.startswith('--days='):
+                        try: days = int(a.split('=', 1)[1])
+                        except ValueError: pass
+                summary = audit_reader.how_am_i_doing(days=days)
+                self._append('bot_lbl', 'Pebble\n')
+                self._append('bot_msg', audit_reader.render_summary(summary) + '\n')
+            except Exception as e:
+                self._append('err_msg', f'how-am-i-doing failed: {e}\n')
+            return
+
         if cmd == '/help':
             self._append('bot_lbl', 'Pebble\n')
             self._append('bot_msg',
                 'Commands:\n'
-                '  /briefing               — generate a morning briefing\n'
-                '  /review-drafts          — list dry-run previews\n'
-                '  /review-drafts --clear  — delete all dry-run previews\n'
-                '  /help                   — this list\n')
+                '  /briefing                  — generate a morning briefing\n'
+                '  /how-am-i-doing [--days=N] — observability summary\n'
+                '  /review-drafts             — list dry-run previews\n'
+                '  /review-drafts --clear     — delete all dry-run previews\n'
+                '  /help                      — this list\n')
             return
 
         # unknown — show error, do not send to LLM

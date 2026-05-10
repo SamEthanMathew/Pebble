@@ -1004,9 +1004,23 @@ class ChatAPI:
             except Exception as e:
                 return f'Briefing failed: {e}'
 
+        if cmd == '/how-am-i-doing':
+            try:
+                import audit_reader
+                days = 7
+                for a in args:
+                    if a.startswith('--days='):
+                        try: days = int(a.split('=', 1)[1])
+                        except ValueError: pass
+                summary = audit_reader.how_am_i_doing(days=days)
+                return audit_reader.render_summary(summary)
+            except Exception as e:
+                return f'how-am-i-doing failed: {e}'
+
         if cmd == '/help':
             return ('**Commands**\n\n'
                     '- `/briefing` — generate a morning briefing\n'
+                    '- `/how-am-i-doing [--days=N]` — observability summary\n'
                     '- `/review-drafts` — list dry-run previews\n'
                     '- `/review-drafts --clear` — delete all dry-run previews\n'
                     '- `/help` — this list')
