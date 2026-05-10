@@ -62,7 +62,21 @@ class ChatWindow:
         self.win.lift()
         self._visible = True
         self._refresh_model_selector()
+        self._refresh_dry_banner()
         self._input.focus_set()
+
+    def _refresh_dry_banner(self):
+        """Show/hide the orange dry-run strip based on current config."""
+        import dry_run
+        if dry_run.is_enabled():
+            # pack right after the title bar — fill='x' top
+            self._dry_banner.pack(fill='x', after=None)
+            try:
+                self._dry_banner.pack_configure(after=self.win.children[next(iter(self.win.children))])
+            except Exception:
+                pass
+        else:
+            self._dry_banner.pack_forget()
 
     def hide(self):
         self.win.withdraw()
@@ -78,6 +92,17 @@ class ChatWindow:
 
         tk.Label(title, text='🦀  Pebble', bg=C['accent'], fg='white',
                  font=('Segoe UI', 11, 'bold')).pack(side='left', padx=14)
+
+        # dry-run banner (hidden when dry_run=false)
+        self._dry_banner = tk.Frame(self.win, bg='#d39a2c', height=22)
+        self._dry_banner_lbl = tk.Label(
+            self._dry_banner,
+            text='🧪  DRY RUN — no external API calls will be made.  Use /review-drafts to inspect.',
+            bg='#d39a2c', fg='#1a1a30',
+            font=('Segoe UI', 8, 'bold'),
+        )
+        self._dry_banner_lbl.pack(fill='x', pady=2)
+        self._refresh_dry_banner()
 
         tk.Button(
             title, text='✕', command=self.hide,
@@ -240,6 +265,12 @@ class ChatWindow:
 
         self._append('you_lbl', 'You\n')
         self._append('you_msg', text + '\n')
+
+        # ── Slash commands intercepted locally (never sent to LLM) ───────────
+        if text.startswith('/'):
+            self._handle_slash_command(text)
+            return
+
         self._msgs.append({'role': 'user', 'content': text})
 
         self._busy = True
@@ -247,6 +278,50 @@ class ChatWindow:
         self._thinking_lbl.pack(fill='x', side='bottom', pady=(0, 2))
 
         threading.Thread(target=self._call_model, daemon=True).start()
+
+    def _handle_slash_command(self, text: str):
+        parts = text.split()
+        cmd = parts[0].lower()
+        args = parts[1:]
+
+        if cmd == '/review-drafts':
+            import dry_run
+            if '--clear' in args:
+                n = dry_run.clear_previews()
+                self._append('bot_lbl', 'Pebble\n')
+                self._append('bot_msg', f'Cleared {n} dry-run preview{"s" if n != 1 else ""}.\n')
+                return
+            previews = dry_run.list_previews(limit=20)
+            self._append('bot_lbl', 'Pebble\n')
+            if not previews:
+                self._append('bot_msg', 'No dry-run previews. (Either dry-run is off or nothing has been proposed yet.)\n')
+                return
+            lines = [f'{len(previews)} dry-run preview{"s" if len(previews) != 1 else ""} (most recent first):']
+            for p in previews:
+                ts  = p.get('timestamp', '?')
+                mod = p.get('module', '?')
+                act = p.get('action', '?')
+                src = p.get('source', '?')
+                note = (p.get('note') or '')[:80]
+                lines.append(f'  [{ts}] {mod}.{act}  ←  {src}')
+                if note:
+                    lines.append(f'      {note}')
+            lines.append('')
+            lines.append('Clear all: /review-drafts --clear')
+            self._append('bot_msg', '\n'.join(lines) + '\n')
+            return
+
+        if cmd == '/help':
+            self._append('bot_lbl', 'Pebble\n')
+            self._append('bot_msg',
+                'Commands:\n'
+                '  /review-drafts          — list dry-run previews\n'
+                '  /review-drafts --clear  — delete all dry-run previews\n'
+                '  /help                   — this list\n')
+            return
+
+        # unknown — show error, do not send to LLM
+        self._append('err_msg', f'Unknown command: {cmd}. Try /help.\n')
 
     def _call_model(self):
         try:

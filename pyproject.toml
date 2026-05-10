@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pebble"
+version = "0.2.0"
+description = "Autonomous personal agent for Windows — pixel-art crab mascot on the taskbar."
+readme = { text = "Pebble V2 — see plan at .claude/plans/.", content-type = "text/markdown" }
+requires-python = ">=3.11"
+authors = [{ name = "Sam Mathew", email = "semathew@andrew.cmu.edu" }]
+license = { text = "Proprietary" }
+keywords = ["assistant", "agent", "desktop", "tkinter"]
+
+dependencies = [
+    "pillow>=10.0,<12.0",
+    "requests>=2.31,<3.0",
+    "psutil>=5.9,<7.0",
+    "numpy>=1.26,<3.0",
+    "pywebview>=5.0,<6.0",
+    "pynput>=1.7,<2.0",
+    "anthropic>=0.39,<1.0",
+    "google-auth>=2.30,<3.0",
+    "google-auth-oauthlib>=1.2,<2.0",
+    "google-auth-httplib2>=0.2,<1.0",
+    "google-api-python-client>=2.140,<3.0",
+    "tiktoken>=0.7,<1.0",
+]
+
+[project.optional-dependencies]
+cloud-extras   = ["openai>=1.30,<2.0", "google-generativeai>=0.8,<1.0"]
+memory         = ["sqlite-vec>=0.1"]
+scraping       = ["trafilatura>=1.12"]
+dev            = ["pytest>=8.0,<9.0"]
+
+[project.scripts]
+pebble = "main:CrabPet"
+
+[tool.setuptools]
+py-modules = [
+    "main", "chat_server", "chat_window", "crab_config",
+    "model_backend", "tool_orchestrator", "notification_popup",
+    "proactive_engine", "setup_wizard", "settings_window",
+    "audit", "dry_run", "atomic_io", "metrics",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["modules*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-ra -q"

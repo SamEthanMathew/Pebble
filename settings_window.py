@@ -92,7 +92,40 @@ class SettingsWindow:
             padx=14, cursor='hand2',
         ).pack(side='right')
 
-        # section header
+        # ── Behavior section (Dry Run toggle) ────────────────────────────────
+        tk.Label(self.win, text='Behavior', bg=C['bg'], fg=C['text'],
+                 font=('Segoe UI', 13, 'bold')).pack(anchor='w', padx=20, pady=(18, 4))
+
+        behavior_outer = tk.Frame(self.win, bg=C['border'], padx=1, pady=1)
+        behavior_outer.pack(fill='x', padx=20, pady=(0, 6))
+        behavior_card = tk.Frame(behavior_outer, bg=C['card'])
+        behavior_card.pack(fill='x', ipadx=12, ipady=10)
+
+        dry_row = tk.Frame(behavior_card, bg=C['card'])
+        dry_row.pack(fill='x', padx=4, pady=2)
+        tk.Label(dry_row, text='🧪  Dry Run Mode', bg=C['card'], fg=C['text'],
+                 font=('Segoe UI', 10, 'bold')).pack(side='left')
+        self._dry_run_var = tk.BooleanVar(value=bool(crab_config.get('dry_run', False)))
+
+        def _toggle_dry_run():
+            crab_config.set_value('dry_run', bool(self._dry_run_var.get()))
+
+        tk.Checkbutton(
+            dry_row, variable=self._dry_run_var, command=_toggle_dry_run,
+            bg=C['card'], fg=C['text'], selectcolor=C['accent'],
+            activebackground=C['card'], bd=0, highlightthickness=0,
+        ).pack(side='right')
+
+        tk.Label(
+            behavior_card,
+            text=("When on, Pebble logs every action it WOULD take to "
+                  "~/.pebble/dry_run_previews/ instead of calling external APIs. "
+                  "Review with /review-drafts in chat."),
+            bg=C['card'], fg=C['dim'], font=('Segoe UI', 9),
+            wraplength=W - 80, justify='left',
+        ).pack(anchor='w', padx=4, pady=(4, 0))
+
+        # ── Modules section ─────────────────────────────────────────────────
         tk.Label(self.win, text='Modules', bg=C['bg'], fg=C['text'],
                  font=('Segoe UI', 13, 'bold')).pack(anchor='w', padx=20, pady=(18, 4))
         tk.Label(

@@ -1,7 +1,12 @@
 """
 Proactive engine — background polling threads for Pebble.
 Checks calendar, tasks, and triggers morning briefing.
-All notifications go through NotificationPopup on the tkinter thread.
+
+Phase 1 refactor: polling loops PUBLISH events to the bus (events.py)
+instead of calling notification helpers directly. The existing _notify_*
+methods stay and are wired up as default subscribers, so user-visible
+behavior is unchanged. Phase 2 planners + dispatcher will subscribe to
+the same events and gradually take over routing decisions.
 """
 
 from __future__ import annotations
@@ -9,8 +14,16 @@ from __future__ import annotations
 import threading
 import datetime
 from datetime import date
-from typing import Callable
+from typing import Any, Callable
 import tkinter as tk
+
+from events import (
+    bus,
+    CALENDAR_EVENT_APPROACHING,
+    TASK_DUE_SOON,
+    REMINDER_DUE,
+    FOCUS_SESSION_ENDED,
+)
 
 
 class ProactiveEngine:
@@ -31,6 +44,38 @@ class ProactiveEngine:
         self._meeting_prep_notified: set[str] = set()
 
         self._threads: list[threading.Thread] = []
+
+        # Subscribe default notify handlers so user-visible behavior persists
+        # while planners are not yet in place. Each handler unpacks the payload
+        # and calls the existing _notify_* method.
+        bus.subscribe(CALENDAR_EVENT_APPROACHING, self._on_calendar_event)
+        bus.subscribe(TASK_DUE_SOON,              self._on_tasks_due)
+        bus.subscribe(REMINDER_DUE,               self._on_reminder_due)
+        bus.subscribe(FOCUS_SESSION_ENDED,        self._on_focus_end)
+
+    # ── default subscribers (translate payload → existing notify method) ─────
+
+    def _on_calendar_event(self, payload: dict[str, Any]) -> None:
+        self._notify_event(
+            payload.get('title', 'Untitled event'),
+            int(payload.get('minutes_away', 0)),
+            payload.get('location', '') or '',
+        )
+
+    def _on_tasks_due(self, payload: dict[str, Any]) -> None:
+        kind  = payload.get('kind', 'today')
+        tasks = payload.get('tasks', [])
+        if tasks:
+            self._notify_tasks(kind, tasks)
+
+    def _on_reminder_due(self, payload: dict[str, Any]) -> None:
+        self._notify_reminder(payload.get('reminder', {}))
+
+    def _on_focus_end(self, payload: dict[str, Any]) -> None:
+        self._notify_focus_end(
+            payload.get('session_type', 'work'),
+            payload.get('task', 'Focus session'),
+        )
 
     def start(self):
         """Start all background polling threads."""
@@ -99,7 +144,14 @@ class ProactiveEngine:
                     if 0 <= mins_away <= 15:
                         self._notified_events.add(eid)
                         location = event.get('location', '')
-                        self._notify_event(summary, mins_away, location)
+                        bus.publish(CALENDAR_EVENT_APPROACHING, {
+                            'event_id':     eid,
+                            'title':        summary,
+                            'start_iso':    start_str,
+                            'minutes_away': mins_away,
+                            'location':     location,
+                            'attendees':    event.get('attendees', []),
+                        })
                 except Exception:
                     continue
         except Exception:
@@ -175,9 +227,9 @@ class ProactiveEngine:
                 due_today.append(task['text'])
 
         if overdue:
-            self._notify_tasks('overdue', overdue)
+            bus.publish(TASK_DUE_SOON, {'kind': 'overdue', 'tasks': overdue})
         elif due_today:
-            self._notify_tasks('today', due_today)
+            bus.publish(TASK_DUE_SOON, {'kind': 'today',   'tasks': due_today})
 
     def _notify_tasks(self, kind: str, tasks: list[str]):
         def _show():
@@ -269,7 +321,7 @@ class ProactiveEngine:
             from modules.reminders import get_due_reminders
             due = get_due_reminders()
             for r in due:
-                self._notify_reminder(r)
+                bus.publish(REMINDER_DUE, {'reminder': r})
                 # Mark done immediately to avoid repeat
                 import json
                 from pathlib import Path
@@ -340,7 +392,7 @@ class ProactiveEngine:
 
             if remaining <= 0 and notify_key not in self._notified_focus:
                 self._notified_focus.add(notify_key)
-                self._notify_focus_end(session_type, task)
+                bus.publish(FOCUS_SESSION_ENDED, {'session_type': session_type, 'task': task})
             elif 0 < remaining <= 1 and f'{notify_key}_1min' not in self._notified_focus:
                 self._notified_focus.add(f'{notify_key}_1min')
                 self._notify_focus_1min(session_type, task)

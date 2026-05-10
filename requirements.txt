@@ -1,10 +1,34 @@
-# Core (required)
-pillow>=10.0.0
-requests>=2.31.0
-psutil>=5.9.0
-numpy>=1.26.0
+# Pebble runtime dependencies (Windows-targeted).
+# Pinned to allow patch updates without surprises.
 
-# Cloud providers (install whichever you use)
-anthropic>=0.30.0
-# openai>=1.30.0
-# google-generativeai>=0.8.0
+# ── Core (always required) ─────────────────────────────────────────────────────
+pillow>=10.0,<12.0
+requests>=2.31,<3.0
+psutil>=5.9,<7.0
+numpy>=1.26,<3.0
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
+pywebview>=5.0,<6.0
+pynput>=1.7,<2.0
+# tkinter ships with CPython on Windows — no pip needed
+
+# ── LLM backends (install whichever you use) ───────────────────────────────────
+anthropic>=0.39,<1.0
+# openai>=1.30,<2.0
+# google-generativeai>=0.8,<1.0
+
+# ── Google APIs (Gmail, Calendar) ──────────────────────────────────────────────
+google-auth>=2.30,<3.0
+google-auth-oauthlib>=1.2,<2.0
+google-auth-httplib2>=0.2,<1.0
+google-api-python-client>=2.140,<3.0
+
+# ── Context window management ──────────────────────────────────────────────────
+tiktoken>=0.7,<1.0
+
+# ── Phase 3 data + scraping (install when entity store / scraper ship) ─────────
+# sqlite-vec>=0.1
+# trafilatura>=1.12
+
+# ── Testing (dev) ──────────────────────────────────────────────────────────────
+pytest>=8.0,<9.0

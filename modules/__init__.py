@@ -146,6 +146,12 @@ try:
 except ImportError:
     _HAS_MEMORY = False
 
+try:
+    from .entity_module import EntityModule
+    _HAS_ENTITIES = True
+except ImportError:
+    _HAS_ENTITIES = False
+
 ALL_MODULES: list[type[PebbleModule]] = [m for m in [
     SystemContextModule,
     ClipboardModule,
@@ -171,6 +177,7 @@ ALL_MODULES: list[type[PebbleModule]] = [m for m in [
     CryptoModule        if _HAS_CRYPTO     else None,
     DiscordModule       if _HAS_DISCORD    else None,
     MemoryModule        if _HAS_MEMORY     else None,
+    EntityModule        if _HAS_ENTITIES   else None,
     STTModule           if _HAS_STT        else None,
     ScreenshotModule    if _HAS_SCREENSHOT else None,
 ] if m is not None]
@@ -186,7 +193,7 @@ def get_active_modules() -> list[PebbleModule]:
         entry = cfgs.get(cls.name, {})
         default_on = cls.name in ('system_context', 'clipboard', 'tasks', 'journal',
                                    'reminders', 'memory', 'focus_timer', 'file_search',
-                                   'news_feed', 'screenshot', 'stt', 'crypto')
+                                   'news_feed', 'screenshot', 'stt', 'crypto', 'entities')
         if not entry.get('enabled', default_on):
             continue
         instance = cls(entry)

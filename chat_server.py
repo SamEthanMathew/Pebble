@@ -47,6 +47,18 @@ CHAT_HTML = r"""<!DOCTYPE html>
     border:1px solid rgba(80,110,160,.18);
     display:grid;grid-template-rows:56px 1fr auto;overflow:hidden;position:relative;
   }
+  body.dry-run .app-window{
+    grid-template-rows:56px 26px 1fr auto;
+  }
+  .dry-run-banner{
+    display:none;
+    align-items:center;justify-content:center;gap:8px;
+    height:26px;font-size:11.5px;font-weight:700;letter-spacing:.02em;
+    color:#1a1a30;background:linear-gradient(90deg,#f59e0b,#eab308);
+    border-bottom:1px solid rgba(0,0,0,.18);
+  }
+  body.dry-run .dry-run-banner{display:flex;}
+  .dry-run-banner i{width:14px;height:14px;}
   .drag-handle{
     position:absolute;top:4px;left:50%;transform:translateX(-50%);
     width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.1);z-index:10;
@@ -441,6 +453,12 @@ CHAT_HTML = r"""<!DOCTYPE html>
       </button>
       <button class="win-btn close" id="closeBtn" title="Close"><i data-lucide="x"></i></button>
     </div>
+  </div>
+
+  <!-- DRY RUN BANNER (visible only when body.dry-run is set) -->
+  <div class="dry-run-banner" id="dryRunBanner">
+    <i data-lucide="flask-conical"></i>
+    DRY RUN — no external API calls. Type /review-drafts to inspect.
   </div>
 
   <!-- model picker dropdown -->
@@ -909,6 +927,7 @@ class ChatAPI:
     def on_ready(self):
         """Called by JS when the webview is initialized."""
         import crab_config
+        import dry_run
         from modules import get_active_modules, ALL_MODULES
 
         mid    = crab_config.get_active_model_id()
@@ -926,14 +945,62 @@ class ChatAPI:
         })
         self._window.evaluate_js(f'setModelInfo({info})')
 
+        # Apply dry-run banner state
+        if dry_run.is_enabled():
+            self._window.evaluate_js("document.body.classList.add('dry-run')")
+        else:
+            self._window.evaluate_js("document.body.classList.remove('dry-run')")
+
         greeting = 'Hey! What can I help you with?'
         self._msgs = []
         self._window.evaluate_js(f'receiveMessage({json.dumps(greeting)})')
 
     def send_message(self, text: str):
-        """Called by JS when user sends a message."""
+        """Called by JS when user sends a message. Intercepts slash commands."""
+        # Slash commands are handled locally and never sent to the LLM
+        if text.startswith('/'):
+            reply = self._handle_slash_command(text)
+            if reply is not None:
+                self._window.evaluate_js(f'receiveMessage({json.dumps(reply)})')
+                return
         self._msgs.append({'role': 'user', 'content': text})
         threading.Thread(target=self._process, daemon=True).start()
+
+    def _handle_slash_command(self, text: str) -> str | None:
+        import dry_run
+        parts = text.split()
+        cmd   = parts[0].lower()
+        args  = parts[1:]
+
+        if cmd == '/review-drafts':
+            if '--clear' in args:
+                n = dry_run.clear_previews()
+                return f'Cleared {n} dry-run preview{"s" if n != 1 else ""}.'
+            previews = dry_run.list_previews(limit=20)
+            if not previews:
+                return ('No dry-run previews. '
+                        '(Either dry-run is off or nothing has been proposed yet.)')
+            lines = [f'**{len(previews)} dry-run preview{"s" if len(previews) != 1 else ""}** (most recent first):', '']
+            for p in previews:
+                ts  = p.get('timestamp', '?')
+                mod = p.get('module', '?')
+                act = p.get('action', '?')
+                src = p.get('source', '?')
+                note = (p.get('note') or '')[:120]
+                lines.append(f'- `{ts}` **{mod}.{act}** ← _{src}_')
+                if note:
+                    lines.append(f'    {note}')
+            lines.append('')
+            lines.append('_Clear all: `/review-drafts --clear`_')
+            return '\n'.join(lines)
+
+        if cmd == '/help':
+            return ('**Commands**\n\n'
+                    '- `/review-drafts` — list dry-run previews\n'
+                    '- `/review-drafts --clear` — delete all dry-run previews\n'
+                    '- `/help` — this list')
+
+        return f'Unknown command: `{cmd}`. Try `/help`.'
 
     def _process(self):
         try:

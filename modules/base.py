@@ -2,6 +2,19 @@
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
+from enum import Enum
+
+
+class ActionTier(Enum):
+    """Per docs/contracts.md §1.
+
+    AUTO   — act silently (reads, internal state, user-initiated timers)
+    NOTIFY — act, then tell the user (drafts, task changes, journal appends)
+    ASK    — propose, wait for approval (outbound sends, calendar writes, deletes)
+    """
+    AUTO   = 'auto'
+    NOTIFY = 'notify'
+    ASK    = 'ask'
 
 
 class PebbleModule(ABC):
@@ -11,6 +24,10 @@ class PebbleModule(ABC):
     icon:         str        = '🔌'
     # [{key, label, type: 'text'|'path'|'password'}]
     config_fields: list[dict] = []
+
+    # Subclasses override with per-action defaults. Anything not listed defaults to ASK.
+    # Example:  _default_tiers = {'search': ActionTier.AUTO, 'send': ActionTier.ASK}
+    _default_tiers: dict[str, ActionTier] = {}
 
     def __init__(self, cfg: dict):
         self.cfg = cfg
@@ -36,6 +53,34 @@ class PebbleModule(ABC):
     def execute(self, **kwargs) -> str:
         """Run the tool and return a plain-text result."""
         ...
+
+    # ── action tier (autonomy layer) ───────────────────────────────────────────
+
+    def action_tier(self, action_name: str) -> ActionTier:
+        """Resolve the tier for a given action.
+
+        Precedence: config override (config.tiers.<tool_name>.<action_name>) →
+        self._default_tiers → ActionTier.ASK.
+        """
+        try:
+            import crab_config
+            overrides = crab_config.get('tiers', {}) or {}
+            mod_overrides = overrides.get(self.tool_name(), {})
+            raw = mod_overrides.get(action_name)
+            if raw:
+                return ActionTier(raw)
+        except Exception:
+            pass
+        return self._default_tiers.get(action_name, ActionTier.ASK)
+
+    def outbound_target_id(self, action_name: str, args: dict) -> str | None:
+        """For outbound actions, the canonical identifier of the target
+        (e.g. recipient email, channel id). Used by the first-time-action
+        ledger to ask once per new target. Default: None (non-outbound).
+
+        Subclasses override for actions like gmail.send, slack.send.
+        """
+        return None
 
     # ── schema helpers (built from above — modules don't override these) ───────
 
