@@ -36,7 +36,8 @@ def pebble_home(tmp_path, monkeypatch):
                      'first_time_ledger', 'autonomy', 'approval_queue',
                      'cache', 'scraper', 'planners.exam_prep',
                      'modules.memory', 'audit_reader', 'idle_detect',
-                     'planners.wrapup', 'feedback', 'entity_suggest'):
+                     'planners.wrapup', 'feedback', 'entity_suggest',
+                     'error_reporter', 'setup_wizard'):
         if mod_name in sys.modules:
             import importlib
             importlib.reload(sys.modules[mod_name])

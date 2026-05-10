@@ -80,6 +80,37 @@ CLOUD_PROVIDERS = [
 ]
 
 
+# ── first-run defaults (Phase 5 onboarding) ────────────────────────────────────
+
+def _apply_first_run_defaults() -> None:
+    """Seed safe defaults the first time setup_complete becomes True.
+
+    - dry_run=True so the user can build trust before actions go live
+    - tiers: outbound = ASK, drafts = NOTIFY, reads = AUTO
+    These are no-ops if the user has already touched the relevant config.
+    """
+    if crab_config.get('first_run_defaults_applied'):
+        return
+    if crab_config.get('dry_run') is None:
+        crab_config.set_value('dry_run', True)
+    if not crab_config.get('tiers'):
+        crab_config.set_value('tiers', {
+            'gmail':   {'search': 'auto', 'draft': 'notify', 'send': 'ask'},
+            'gcal':    {'list_events': 'auto', 'create_event': 'ask', 'update_event': 'ask'},
+            'slack':   {'read': 'auto', 'send': 'ask'},
+            'tasks':   {'list': 'auto', 'complete': 'notify', 'create': 'notify'},
+            'obsidian':{'search': 'auto', 'read': 'auto', 'append': 'notify'},
+            'memory':  {'recall': 'auto', 'remember': 'notify', 'forget': 'notify'},
+            'entities':{'lookup': 'auto', 'list': 'auto', 'add': 'notify', 'delete': 'ask'},
+        })
+    crab_config.set_value('first_run_defaults_applied', True)
+
+
+def _mark_setup_complete() -> None:
+    crab_config.set_value('setup_complete', True)
+    _apply_first_run_defaults()
+
+
 # ── hardware detection ─────────────────────────────────────────────────────────
 
 def detect_hardware() -> dict:
@@ -457,7 +488,7 @@ class SetupWizard:
             self._added.append(entry)
             crab_config.add_model(entry)
         if self._added:
-            crab_config.set_value('setup_complete', True)
+            _mark_setup_complete()
         self._rebuild_list()
 
     def _pick_local(self, tag: str):
@@ -700,7 +731,7 @@ class SetupWizard:
         self._added = [m for m in self._added if m['id'] != entry['id']]
         self._added.append(entry)
         crab_config.add_model(entry)
-        crab_config.set_value('setup_complete', True)
+        _mark_setup_complete()
         self._rebuild_list()
 
     def _remove_model(self, model_id: str):
@@ -727,7 +758,7 @@ class SetupWizard:
         for entry in self._added:
             self._render_card(entry)
 
-        crab_config.set_value('setup_complete', True)
+        _mark_setup_complete()
         self._continue_btn.config(state='normal', bg=C['accent'])
 
     def _render_card(self, entry: dict):
@@ -790,8 +821,16 @@ class SetupWizard:
             return
         names = ',   '.join(m['display_name'] for m in self._added[:2])
         suffix = f'  + {count - 2} more' if count > 2 else ''
+        is_dry = bool(crab_config.get('dry_run'))
+        dry_note = (
+            '\n\n🧪  Dry-run mode is ON for now — Pebble will log every action it WOULD take '
+            'instead of calling external APIs. Use /review-drafts to inspect, then turn off '
+            'in Settings when you trust it.\n\n'
+            'Authenticate Google, Canvas, Obsidian, etc. from Settings → Modules.'
+        ) if is_dry else ''
         self._done_sub.config(
-            text=f'{count} model{"s" if count > 1 else ""} ready:\n{names}{suffix}')
+            text=f'{count} model{"s" if count > 1 else ""} ready:\n{names}{suffix}{dry_note}',
+            justify='center', wraplength=W - 80)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

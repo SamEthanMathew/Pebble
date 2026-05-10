@@ -34,14 +34,18 @@ def test_audit_filter_dry_run(pebble_home):
 
 
 def test_audit_since_window(pebble_home):
-    import audit, audit_reader, time
+    """A cutoff in the past must include all rows; in the future excludes them."""
+    import audit, audit_reader
     audit.append({'module': 'a', 'action': '1'})
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=1)
-    time.sleep(1)
     audit.append({'module': 'a', 'action': '2'})
-    rows = audit_reader.audit_since(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(milliseconds=500))
-    actions = [r['action'] for r in rows]
-    assert '2' in actions
+
+    far_past = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
+    far_future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+
+    actions_past = [r['action'] for r in audit_reader.audit_since(far_past)]
+    assert '1' in actions_past and '2' in actions_past
+
+    assert audit_reader.audit_since(far_future) == []
 
 
 def test_metrics_count_by_event(pebble_home):

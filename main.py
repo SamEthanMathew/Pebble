@@ -19,6 +19,13 @@ import sys
 from PIL import Image, ImageTk
 from settings_window import SettingsWindow
 
+# Capture unhandled exceptions to ~/.pebble/errors/<date>.jsonl
+try:
+    import error_reporter
+    error_reporter.install_hooks()
+except Exception:
+    pass
+
 try:
     from modules.gmail import GmailWatcherThread
     _HAS_GMAIL_WATCHER = True
