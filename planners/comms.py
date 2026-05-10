@@ -187,8 +187,64 @@ class CommsPlanner(BasePlanner):
         data.setdefault('action_required', [])
         data.setdefault('fyi',             [])
         data.setdefault('ignore_count',    0)
-        # Phase 2 = triage only — strip any drafts the model put in (Phase 3 will keep them)
-        for item in data.get('action_required', []):
-            if isinstance(item, dict):
-                item.pop('draft', None)
+
+        # Drafting activation: per config.comms.draft_enabled (default False).
+        # When False, strip any drafts the model speculatively returned.
+        if not _draft_enabled():
+            for item in data.get('action_required', []):
+                if isinstance(item, dict):
+                    item.pop('draft', None)
         return data
+
+    # ── draft proposals (Phase 3) ─────────────────────────────────────────────
+
+    def draft_proposals(self, payload: dict[str, Any]) -> list:
+        """Yield Proposal objects for each action_required item with a draft.
+
+        Routed through the autonomy layer (NOTIFY tier on gmail.draft).
+        Caller pattern:
+            payload = CommsPlanner().run()
+            for p in CommsPlanner().draft_proposals(payload):
+                autonomy.route(p)
+        """
+        from planners.base import Proposal
+
+        if not _draft_enabled():
+            return []
+
+        out = []
+        for item in payload.get('action_required', []) or []:
+            draft = item.get('draft')
+            if not draft:
+                continue
+            from_block = item.get('from', {}) or {}
+            to_email = from_block.get('email')
+            subject  = item.get('subject', '')
+            thread_id = item.get('thread_id', '') or item.get('message_id', '')
+            if not to_email:
+                continue
+            out.append(Proposal(
+                module='gmail',
+                action='draft',
+                args={
+                    'to':      to_email,
+                    'subject': f'Re: {subject}' if subject and not subject.lower().startswith('re:') else subject,
+                    'body':    draft,
+                    'thread_id': thread_id,
+                },
+                source='comms_planner',
+                urgency=item.get('urgency', 'normal'),
+                reversible=True,
+                target_id=to_email,
+                rationale=f'Draft reply to {from_block.get("name") or to_email}: {item.get("summary", "")[:80]}',
+            ))
+        return out
+
+
+def _draft_enabled() -> bool:
+    try:
+        import crab_config
+        cfg = crab_config.get('comms', {}) or {}
+        return bool(cfg.get('draft_enabled', False))
+    except Exception:
+        return False

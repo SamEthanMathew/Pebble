@@ -32,7 +32,10 @@ def pebble_home(tmp_path, monkeypatch):
                      'events',
                      'planners.base', 'planners',
                      'planners.schedule', 'planners.comms',
-                     'planners.school', 'planners.dispatcher', 'planners.morning'):
+                     'planners.school', 'planners.dispatcher', 'planners.morning',
+                     'first_time_ledger', 'autonomy', 'approval_queue',
+                     'cache', 'scraper', 'planners.exam_prep',
+                     'modules.memory'):
         if mod_name in sys.modules:
             import importlib
             importlib.reload(sys.modules[mod_name])
