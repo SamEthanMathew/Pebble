@@ -25,8 +25,14 @@ def pebble_home(tmp_path, monkeypatch):
     """Redirect Path.home() so anything that writes to ~/.pebble lands in tmp_path."""
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
     # Many of our modules import their _PATH at module-load time; reload sensitive ones
+    # Reload order matters: events first (bus singleton), then anything that
+    # captured `bus` at import time. planners.* re-import bus from the fresh events.
     for mod_name in ('audit', 'dry_run', 'metrics', 'atomic_io', 'crab_config',
-                     'entity_store', 'modules.entity_module'):
+                     'entity_store', 'modules.entity_module',
+                     'events',
+                     'planners.base', 'planners',
+                     'planners.schedule', 'planners.comms',
+                     'planners.school', 'planners.dispatcher', 'planners.morning'):
         if mod_name in sys.modules:
             import importlib
             importlib.reload(sys.modules[mod_name])

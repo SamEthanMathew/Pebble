@@ -994,8 +994,19 @@ class ChatAPI:
             lines.append('_Clear all: `/review-drafts --clear`_')
             return '\n'.join(lines)
 
+        if cmd == '/briefing':
+            try:
+                from planners.morning import generate_briefing
+                text = generate_briefing(refresh_planners=True)
+                if text is None:
+                    return '_Briefing unavailable — set a `planner_model` in config.json._'
+                return text
+            except Exception as e:
+                return f'Briefing failed: {e}'
+
         if cmd == '/help':
             return ('**Commands**\n\n'
+                    '- `/briefing` — generate a morning briefing\n'
                     '- `/review-drafts` — list dry-run previews\n'
                     '- `/review-drafts --clear` — delete all dry-run previews\n'
                     '- `/help` — this list')

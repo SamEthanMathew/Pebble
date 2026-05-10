@@ -311,10 +311,28 @@ class ChatWindow:
             self._append('bot_msg', '\n'.join(lines) + '\n')
             return
 
+        if cmd == '/briefing':
+            self._busy = True
+            self._send_btn.config(state='disabled', bg=C['muted'], text='…')
+            self._thinking_lbl.pack(fill='x', side='bottom', pady=(0, 2))
+
+            def _run():
+                try:
+                    from planners.morning import generate_briefing
+                    text = generate_briefing(refresh_planners=True)
+                    if text is None:
+                        text = '(Briefing unavailable — set a planner_model in config.json.)'
+                    self.win.after(0, lambda t=text: self._show_response(t))
+                except Exception as e:
+                    self.win.after(0, lambda err=str(e): self._show_error(err))
+            threading.Thread(target=_run, daemon=True).start()
+            return
+
         if cmd == '/help':
             self._append('bot_lbl', 'Pebble\n')
             self._append('bot_msg',
                 'Commands:\n'
+                '  /briefing               — generate a morning briefing\n'
                 '  /review-drafts          — list dry-run previews\n'
                 '  /review-drafts --clear  — delete all dry-run previews\n'
                 '  /help                   — this list\n')
