@@ -1,0 +1,10 @@
+# Core (required)
+pillow>=10.0.0
+requests>=2.31.0
+psutil>=5.9.0
+numpy>=1.26.0
+
+# Cloud providers (install whichever you use)
+anthropic>=0.30.0
+# openai>=1.30.0
+# google-generativeai>=0.8.0

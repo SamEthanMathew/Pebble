@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# PyInstaller
+*.spec.bak
+
+# Editors / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Pebble runtime state (user-local, never commit)
+# (lives at ~/.pebble/, but include here defensively in case anyone runs from a relocated home)
+.pebble/
+pebble_runtime/
+
+# Local secrets / overrides
+.env
+.env.local
+*.local.json
+secrets.json
+credentials.json
+
+# Logs
+*.log
