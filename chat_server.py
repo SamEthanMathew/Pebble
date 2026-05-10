@@ -967,65 +967,15 @@ class ChatAPI:
         threading.Thread(target=self._process, daemon=True).start()
 
     def _handle_slash_command(self, text: str) -> str | None:
-        import dry_run
-        parts = text.split()
-        cmd   = parts[0].lower()
-        args  = parts[1:]
-
-        if cmd == '/review-drafts':
-            if '--clear' in args:
-                n = dry_run.clear_previews()
-                return f'Cleared {n} dry-run preview{"s" if n != 1 else ""}.'
-            previews = dry_run.list_previews(limit=20)
-            if not previews:
-                return ('No dry-run previews. '
-                        '(Either dry-run is off or nothing has been proposed yet.)')
-            lines = [f'**{len(previews)} dry-run preview{"s" if len(previews) != 1 else ""}** (most recent first):', '']
-            for p in previews:
-                ts  = p.get('timestamp', '?')
-                mod = p.get('module', '?')
-                act = p.get('action', '?')
-                src = p.get('source', '?')
-                note = (p.get('note') or '')[:120]
-                lines.append(f'- `{ts}` **{mod}.{act}** ← _{src}_')
-                if note:
-                    lines.append(f'    {note}')
-            lines.append('')
-            lines.append('_Clear all: `/review-drafts --clear`_')
-            return '\n'.join(lines)
-
-        if cmd == '/briefing':
+        import chat_commands
+        result = chat_commands.handle(text)
+        if isinstance(result, chat_commands.AsyncCommand):
+            # Run off-thread; intermediate "thinking" UI is handled by the JS layer
             try:
-                from planners.morning import generate_briefing
-                text = generate_briefing(refresh_planners=True)
-                if text is None:
-                    return '_Briefing unavailable — set a `planner_model` in config.json._'
-                return text
+                return result.fn()
             except Exception as e:
-                return f'Briefing failed: {e}'
-
-        if cmd == '/how-am-i-doing':
-            try:
-                import audit_reader
-                days = 7
-                for a in args:
-                    if a.startswith('--days='):
-                        try: days = int(a.split('=', 1)[1])
-                        except ValueError: pass
-                summary = audit_reader.how_am_i_doing(days=days)
-                return audit_reader.render_summary(summary)
-            except Exception as e:
-                return f'how-am-i-doing failed: {e}'
-
-        if cmd == '/help':
-            return ('**Commands**\n\n'
-                    '- `/briefing` — generate a morning briefing\n'
-                    '- `/how-am-i-doing [--days=N]` — observability summary\n'
-                    '- `/review-drafts` — list dry-run previews\n'
-                    '- `/review-drafts --clear` — delete all dry-run previews\n'
-                    '- `/help` — this list')
-
-        return f'Unknown command: `{cmd}`. Try `/help`.'
+                return f'Error: {e}'
+        return result if isinstance(result, str) else None
 
     def _process(self):
         try:

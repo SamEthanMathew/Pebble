@@ -237,8 +237,11 @@ class Autonomy:
                                tier=tier.value, was_first_time=was_first,
                                error='module not found')
 
+        # Defensive: strip any duplicate 'action' key from args so we don't
+        # TypeError on double-passing.
+        safe_args = {k: v for k, v in (proposal.args or {}).items() if k != 'action'}
         try:
-            result = mod.execute(action=proposal.action, **proposal.args)
+            result = mod.execute(action=proposal.action, **safe_args)
             ok = True
             err = None
         except Exception as e:
