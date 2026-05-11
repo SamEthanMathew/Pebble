@@ -11,7 +11,6 @@ import ctypes
 import ctypes.wintypes
 import sys
 import threading
-import time
 from typing import Callable
 
 import audit

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import pytest
 
 
 def test_input_hash_stable():

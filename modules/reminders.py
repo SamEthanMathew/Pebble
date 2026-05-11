@@ -7,7 +7,6 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-import crab_config
 from .base import PebbleModule
 
 _REMINDERS_PATH = Path.home() / '.pebble' / 'reminders.json'
@@ -151,7 +150,6 @@ class RemindersModule(PebbleModule):
 
         reminders    = _load_reminders()
         query        = text.strip().lower()
-        original_len = len(reminders)
 
         # Try exact match first, then partial
         match_exact   = [r for r in reminders if r.get('text', '').lower() == query]

@@ -7,7 +7,6 @@ with 'Invalid format string'.
 from __future__ import annotations
 
 import datetime as dt
-import json
 
 
 def test_list_with_empty_reminders(pebble_home):

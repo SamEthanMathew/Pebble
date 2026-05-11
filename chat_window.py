@@ -6,7 +6,6 @@ import ctypes
 import os
 import threading
 import tkinter as tk
-from typing import Optional
 
 import crab_config
 

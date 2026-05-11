@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import audit
@@ -104,7 +104,21 @@ class Autonomy:
             if self._approval_handler is not None:
                 metrics.emit('firsttime.asked' if was_first else 'proposal.asked',
                              {'module': proposal.module, 'action': proposal.action})
-                approved = bool(self._approval_handler(proposal))
+                try:
+                    approved = bool(self._approval_handler(proposal))
+                except Exception as exc:
+                    audit.append({
+                        'module':  proposal.module, 'action': proposal.action,
+                        'args':    proposal.args,
+                        'result':  {'error': f'approval_handler raised: {exc}'},
+                        'tier':    effective_tier.value, 'source': proposal.source,
+                        'was_first_time': was_first, 'first_time_key': first_key,
+                    })
+                    return RouteResult(status='error', proposal_id=proposal_id,
+                                       module=proposal.module, action=proposal.action,
+                                       tier=effective_tier.value,
+                                       was_first_time=was_first,
+                                       error=f'approval_handler raised: {exc}')
                 if approved:
                     ledger.record(first_key)
                     return self._execute(proposal, proposal_id,

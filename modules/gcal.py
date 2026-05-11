@@ -3,7 +3,6 @@
 from __future__ import annotations
 import datetime
 import re
-from pathlib import Path
 
 from .base import PebbleModule
 
@@ -242,8 +241,7 @@ class GCalModule(PebbleModule):
             start_rfc = dt_start.isoformat()
             end_rfc   = dt_end.isoformat()
 
-            tz_name = datetime.datetime.now().astimezone().strftime('%Z')
-            result = services.create_event(
+            services.create_event(
                 summary=title.strip(),
                 start_dt=start_rfc,
                 end_dt=end_rfc,
@@ -382,7 +380,6 @@ class GCalModule(PebbleModule):
         """Format a raw Google Calendar API event dict into a display line."""
         tz         = datetime.datetime.now().astimezone().tzinfo
         data_start = event.get('start', {})
-        data_end   = event.get('end',   {})
         title      = event.get('summary', '(No title)')
 
         # All-day event

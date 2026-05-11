@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import requests
 
-import crab_config
 from .base import PebbleModule
 
 _SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search'

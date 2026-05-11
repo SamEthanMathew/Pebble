@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import requests
 
-import crab_config
 from .base import PebbleModule
 
 _BASE_URL = 'https://api.todoist.com/rest/v2'
@@ -202,7 +201,6 @@ class TodoistModule(PebbleModule):
         lines: list[str] = []
         for i, t in enumerate(tasks, 1):
             content  = t.get('content', '')
-            proj_id  = t.get('project_id', '')
             due      = t.get('due', {}) or {}
             due_str  = due.get('string') or due.get('date') or ''
             due_part = f' due:{due_str}' if due_str else ''

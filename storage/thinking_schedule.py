@@ -35,7 +35,6 @@ from __future__ import annotations
 import datetime
 import json
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +76,11 @@ def _read_ledger() -> dict[str, str]:
     except OSError:
         pass
     return out
+
+
+# Module-level lock for tick() — prevents the scheduler thread and a
+# direct user-triggered tick() from racing on the same pass within one second.
+_TICK_LOCK = threading.Lock()
 
 
 def _record_fire(pass_name: str, date_iso: str) -> None:
@@ -207,15 +211,23 @@ class ThinkingScheduler:
             if not should_fire(pass_name, now=now, cfg=cfg,
                                 last_fired_ledger=ledger):
                 continue
+            # Record the fire BEFORE running, so a failure inside run_pass
+            # (vault write rejection, LLM error, etc.) doesn't trigger an
+            # unbounded retry loop at cloud-LLM cost.
+            with _TICK_LOCK:
+                _record_fire(pass_name, today_iso)
+                ledger[pass_name] = today_iso
             try:
                 from .thinking_pass import run_pass
-                r = run_pass(pass_name)
-                _record_fire(pass_name, today_iso)
+                run_pass(pass_name)
                 fired.append(pass_name)
-                # Update the in-memory ledger so a second pass in the same
-                # tick can't fire the same one
-                ledger[pass_name] = today_iso
-            except Exception:
-                # Swallow — failed pass is logged inside run_pass
-                pass
+            except Exception as exc:
+                # Failure already logged inside run_pass via metrics; surface
+                # to errors.jsonl so it shows up in /errors.
+                try:
+                    import error_reporter
+                    error_reporter.report('thinking_schedule', exc,
+                                          context={'pass': pass_name})
+                except Exception:
+                    pass
         return fired

@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import json
 
-import datetime
 import shlex
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 # Sentinel: caller should run `fn()` off the UI thread and display the result.
 @dataclass
@@ -250,7 +249,7 @@ def handle(text: str) -> str | AsyncCommand | None:
         path = ' '.join(args)
         try:
             import crab_config
-            from storage import Vault, NoteNotFound
+            from storage import Vault
             vault_path = (crab_config.get_module_config('obsidian') or {}).get('vault_path')
             if not vault_path:
                 return 'No Obsidian vault configured. Run `/connect obsidian <path>` first.'
@@ -379,7 +378,7 @@ def handle(text: str) -> str | AsyncCommand | None:
         def _run():
             try:
                 import crab_config
-                from storage import Vault, NoteNotFound, run_pass, extract_decision_text
+                from storage import Vault, run_pass, extract_decision_text
                 vp = (crab_config.get_module_config('obsidian') or {}).get('vault_path')
                 if not vp:
                     return 'No vault configured.'
@@ -489,7 +488,7 @@ def handle(text: str) -> str | AsyncCommand | None:
             else:
                 return (f'Unknown workspace `{ws_name}`. '
                         f'Configured: ' + ', '.join(f'`{k}`' for k in workspaces) + '. '
-                        f'Use `/slack-workspaces` to inspect.')
+                        'Use `/slack-workspaces` to inspect.')
 
         if not workspaces:
             return ('No Slack workspaces configured. '
@@ -742,7 +741,7 @@ def handle(text: str) -> str | AsyncCommand | None:
         return audit_reader.render_summary(audit_reader.how_am_i_doing(days=days))
 
     if cmd == '/audit':
-        import audit_reader, json
+        import audit_reader
         n = 20
         if args:
             try: n = int(args[0])

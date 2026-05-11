@@ -945,7 +945,7 @@ class ChatAPI:
         """Called by JS when the webview is initialized."""
         import crab_config
         import dry_run
-        from modules import get_active_modules, ALL_MODULES
+        from modules import get_active_modules
 
         mid    = crab_config.get_active_model_id()
         models = crab_config.get_enabled_models()
@@ -1013,7 +1013,6 @@ class ChatAPI:
         except Exception as exc:
             # Log to ~/.pebble/errors/<date>.jsonl so we can diagnose later
             try:
-                import sys as _sys
                 import error_reporter
                 error_reporter.report(type(exc), exc, exc.__traceback__,
                                        source='chat_server',

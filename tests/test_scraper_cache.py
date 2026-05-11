@@ -20,7 +20,6 @@ def test_cache_expires_after_ttl(pebble_home, monkeypatch):
     cache.set('news', 'k', {'v': 1}, ttl_hours=0.0001)  # ~0.36s
     # Force "now" to be in the future
     import datetime as dt
-    real_now = cache._now
     fake = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=10)
     monkeypatch.setattr(cache, '_now', lambda: fake)
     assert cache.get('news', 'k') is None

@@ -172,7 +172,7 @@ class TaskModule(PebbleModule):
                 json.dumps(tasks, indent=2, default=str),
                 encoding='utf-8',
             )
-        except Exception as e:
+        except Exception:
             # Best-effort; caller will see stale data on next load
             pass
 

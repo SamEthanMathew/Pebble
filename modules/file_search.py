@@ -6,7 +6,6 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-import crab_config
 from .base import PebbleModule
 
 _MAX_DEPTH = 4

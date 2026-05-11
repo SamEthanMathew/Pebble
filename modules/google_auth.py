@@ -1,23 +1,73 @@
-"""Shared Google OAuth helper — uses embedded client config, no credentials.json needed."""
-from __future__ import annotations
-from pathlib import Path
+"""Shared Google OAuth helper.
 
-_CLIENT_CONFIG = {
-    "installed": {
-        "client_id":     "REDACTED_GOOGLE_OAUTH_CLIENT_ID",
-        "client_secret": "REDACTED_GOOGLE_OAUTH_CLIENT_SECRET",
-        "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
-        "token_uri":     "https://oauth2.googleapis.com/token",
-        "redirect_uris": ["http://localhost"],
-    }
-}
+Client credentials are loaded at runtime (not embedded in source) from:
+  1. Env vars PEBBLE_GOOGLE_CLIENT_ID + PEBBLE_GOOGLE_CLIENT_SECRET
+  2. ~/.pebble/secrets/google_oauth.json (Google "installed app" JSON shape)
+
+If neither is present, GoogleServices() raises OAuthNotConfigured with setup steps.
+See SECURITY.md for credential rotation guidance.
+"""
+from __future__ import annotations
+import json
+import os
+from pathlib import Path
 
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/calendar',
 ]
 
-TOKEN_PATH = Path.home() / '.pebble' / 'google_token.json'
+TOKEN_PATH   = Path.home() / '.pebble' / 'google_token.json'
+SECRETS_PATH = Path.home() / '.pebble' / 'secrets' / 'google_oauth.json'
+
+_AUTH_URI    = 'https://accounts.google.com/o/oauth2/auth'
+_TOKEN_URI   = 'https://oauth2.googleapis.com/token'
+
+
+class OAuthNotConfigured(RuntimeError):
+    """Raised when Google OAuth client credentials cannot be located."""
+
+
+def _load_client_config() -> dict:
+    """Resolve OAuth client config from env vars or secrets file.
+
+    Returns a dict in Google's `installed app` shape. Raises OAuthNotConfigured
+    if no credential source is available.
+    """
+    env_id     = os.environ.get('PEBBLE_GOOGLE_CLIENT_ID', '').strip()
+    env_secret = os.environ.get('PEBBLE_GOOGLE_CLIENT_SECRET', '').strip()
+    if env_id and env_secret:
+        return {'installed': {
+            'client_id':     env_id,
+            'client_secret': env_secret,
+            'auth_uri':      _AUTH_URI,
+            'token_uri':     _TOKEN_URI,
+            'redirect_uris': ['http://localhost'],
+        }}
+
+    if SECRETS_PATH.exists():
+        try:
+            data = json.loads(SECRETS_PATH.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise OAuthNotConfigured(
+                f'Failed to read {SECRETS_PATH}: {exc}'
+            ) from exc
+        if 'installed' in data and 'client_id' in data['installed']:
+            return data
+        if 'client_id' in data and 'client_secret' in data:
+            return {'installed': {**data,
+                                  'auth_uri':      data.get('auth_uri', _AUTH_URI),
+                                  'token_uri':     data.get('token_uri', _TOKEN_URI),
+                                  'redirect_uris': data.get('redirect_uris', ['http://localhost'])}}
+        raise OAuthNotConfigured(
+            f'{SECRETS_PATH} does not contain a valid Google OAuth client config.')
+
+    raise OAuthNotConfigured(
+        'Google OAuth client credentials are not configured.\n'
+        'Set PEBBLE_GOOGLE_CLIENT_ID and PEBBLE_GOOGLE_CLIENT_SECRET environment '
+        f'variables, or create {SECRETS_PATH} with the installed-app JSON from '
+        'your Google Cloud Console OAuth client. See SECURITY.md.'
+    )
 
 
 def is_google_connected() -> bool:
@@ -48,10 +98,11 @@ class GoogleServices:
             creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
 
         if not creds or not creds.valid:
+            client_config = _load_client_config()
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                flow  = InstalledAppFlow.from_client_config(_CLIENT_CONFIG, SCOPES)
+                flow  = InstalledAppFlow.from_client_config(client_config, SCOPES)
                 creds = flow.run_local_server(port=0)
             TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
             TOKEN_PATH.write_text(creds.to_json(), encoding='utf-8')

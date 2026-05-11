@@ -79,6 +79,33 @@ class ToolOrchestrator:
         mod = self.modules.get(name)
         if not mod:
             return f'Unknown tool: {name!r}'
+
+        # Tier-aware chat-path safety: audit every NOTIFY/ASK tool call so
+        # prompt-injection-driven outbound writes are visible after the fact,
+        # and block ASK actions when no approval handler is wired.
+        action_name = str(args.get('action') or '')
+        try:
+            from modules.base import ActionTier
+            tier = mod.action_tier(action_name) if action_name else ActionTier.AUTO
+        except Exception:
+            tier = None
+
+        if tier is not None and tier.value in ('notify', 'ask'):
+            try:
+                import audit
+                audit.append({
+                    'module':  name, 'action': action_name,
+                    'args':    args, 'tier': tier.value,
+                    'source':  'chat',
+                })
+            except Exception:
+                pass
+
+        if tier is not None and tier.value == 'ask':
+            return (f'Refusing to run {name}.{action_name} from chat: '
+                    'this action requires explicit approval. Use the autonomy '
+                    'layer (planner → proposal) instead.')
+
         try:
             return mod.execute(**args)
         except Exception as exc:

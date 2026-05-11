@@ -11,12 +11,10 @@ from __future__ import annotations
 import ctypes
 import json
 import platform
-import shutil
 import subprocess
 import threading
 import tkinter as tk
 import webbrowser
-from typing import Optional
 
 import requests
 

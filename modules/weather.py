@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import requests
 
-import crab_config
 from .base import PebbleModule
 
 _CURRENT_URL  = 'https://api.openweathermap.org/data/2.5/weather'

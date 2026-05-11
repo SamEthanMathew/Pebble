@@ -106,6 +106,5 @@ class PebbleModule(ABC):
         props = self.tool_parameters().get('properties', {})
         if props:
             first_key = next(iter(props))
-            desc = props[first_key].get('description', first_key)
             return f'  {self.tool_name()}({first_key}) — {self.tool_description()}'
         return f'  {self.tool_name()}() — {self.tool_description()}'

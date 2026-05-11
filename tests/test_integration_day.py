@@ -9,7 +9,6 @@ If this test breaks after a change, real-world behavior likely also breaks.
 
 from __future__ import annotations
 
-import datetime
 import json
 
 

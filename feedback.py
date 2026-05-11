@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import audit_reader
-from atomic_io import write_json
 
 _FEEDBACK_DIR = Path.home() / '.pebble' / 'feedback'
 _SUGGESTIONS_PATH = _FEEDBACK_DIR / 'prompt_suggestions.jsonl'

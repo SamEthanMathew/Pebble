@@ -17,7 +17,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import audit
 

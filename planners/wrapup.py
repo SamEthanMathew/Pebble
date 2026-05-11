@@ -14,7 +14,6 @@ import datetime
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 import audit
 import audit_reader

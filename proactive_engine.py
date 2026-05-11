@@ -376,8 +376,6 @@ class ProactiveEngine:
             task = state.get('task', 'Focus session')
 
             # Get duration from state or default
-            from pathlib import Path
-            import json
             duration_map = {'work': 25, 'break': 5, 'long_break': 15}
             duration_min = state.get('duration_minutes') or duration_map.get(session_type, 25)
 
@@ -427,7 +425,7 @@ class ProactiveEngine:
             label = 'break' if session_type == 'work' else 'session'
             popup = NotificationPopup(
                 self._root,
-                title=f'⏱ 1 minute left',
+                title='⏱ 1 minute left',
                 body=f'Wrapping up your {label}...',
                 buttons=[{'label': 'OK', 'command': lambda: None, 'style': 'default'}],
                 auto_dismiss_ms=8000,
@@ -455,7 +453,6 @@ class ProactiveEngine:
             import datetime as dt
             svc = GoogleServices()
             now    = dt.datetime.now().astimezone()
-            in_10  = now + dt.timedelta(minutes=10)
             in_15  = now + dt.timedelta(minutes=15)
 
             events = svc.calendar.events().list(

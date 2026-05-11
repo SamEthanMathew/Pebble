@@ -46,7 +46,7 @@ def _safe_run(planner_cls) -> dict[str, Any] | None:
         return planner_cls().run()
     except Exception as e:
         audit.append({
-            'module': f'morning_briefing', 'action': f'planner_failed:{planner_cls.__name__}',
+            'module': 'morning_briefing', 'action': f'planner_failed:{planner_cls.__name__}',
             'result': {'error': str(e)}, 'tier': 'auto', 'source': 'morning_briefing',
         })
         return None

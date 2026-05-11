@@ -176,14 +176,14 @@ def _write_report(plan: list[dict], applied_count: int, errors: list[str]) -> No
     timestamp = datetime.datetime.now().astimezone().isoformat(timespec='seconds')
 
     lines = [
-        f'# Memory.json → Vault Migration Report',
-        f'',
+        '# Memory.json → Vault Migration Report',
+        '',
         f'_Run at {timestamp}_',
-        f'',
+        '',
         f'- Entries in source: {len(plan)}',
         f'- Successfully migrated: {applied_count}',
         f'- Errors: {len(errors)}',
-        f'',
+        '',
     ]
     if errors:
         lines.append('## Errors')
@@ -229,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not entries:
-        print(f'memory.json is empty — nothing to migrate.')
+        print('memory.json is empty — nothing to migrate.')
         return 0
 
     vault_root = _vault_path()

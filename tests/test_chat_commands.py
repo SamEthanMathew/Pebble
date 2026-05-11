@@ -2,6 +2,30 @@
 
 from __future__ import annotations
 
+import pytest
+
+
+# Commands that are safe to smoke-test with no args / safe defaults.
+# Each must return either a string or an AsyncCommand — never None
+# (None means "not a slash command at all") and never crash.
+_NO_ARG_SMOKE_COMMANDS = [
+    '/help', '/status', '/tasks', '/reminders', '/gmail',
+    '/calendar', '/notes', '/entities', '/entity-suggestions',
+    '/proposals', '/my-world', '/audit', '/errors',
+    '/review-drafts', '/how-am-i-doing', '/slack-workspaces',
+]
+
+
+@pytest.mark.parametrize('cmd', _NO_ARG_SMOKE_COMMANDS)
+def test_slash_command_does_not_crash(pebble_home, cmd):
+    """Each documented command returns a string or AsyncCommand, not None,
+    and does not raise even when modules are unconfigured."""
+    from chat_commands import handle, AsyncCommand
+    result = handle(cmd)
+    assert result is not None, f'{cmd} returned None (not recognized as command)'
+    assert isinstance(result, (str, AsyncCommand)), \
+        f'{cmd} returned unexpected type {type(result).__name__}'
+
 
 def test_unknown_returns_friendly_error(pebble_home):
     from chat_commands import handle

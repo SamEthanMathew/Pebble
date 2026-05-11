@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pebble"
-version = "0.2.0"
+version = "0.3.0"
 description = "Autonomous personal agent for Windows — pixel-art crab mascot on the taskbar."
-readme = { text = "Pebble V2 — see plan at .claude/plans/.", content-type = "text/markdown" }
+readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Sam Mathew", email = "semathew@andrew.cmu.edu" }]
 license = { text = "Proprietary" }

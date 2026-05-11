@@ -20,12 +20,11 @@ it goes through Vault.create_note explicitly.
 
 from __future__ import annotations
 
-import datetime
 from dataclasses import dataclass, field
 from typing import Any
 
 from .note import Note
-from .entity_resolver import EntityResolver, Resolution
+from .entity_resolver import EntityResolver
 from .vault import Provenance, Vault
 
 

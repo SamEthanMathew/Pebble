@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 
 
 def test_get_default_returns_default(pebble_home):

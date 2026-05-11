@@ -6,7 +6,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import crab_config
 from .base import PebbleModule
 
 _STATE_PATH = Path.home() / '.pebble' / 'focus_state.json'

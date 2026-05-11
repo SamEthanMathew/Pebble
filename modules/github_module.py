@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import requests
 
-import crab_config
 from .base import PebbleModule
 
 _API_BASE = 'https://api.github.com'

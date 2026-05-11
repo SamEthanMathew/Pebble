@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import requests
 
-import crab_config
 from .base import PebbleModule
 
 _BASE_URL = 'https://api.notion.com/v1'

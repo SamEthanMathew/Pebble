@@ -98,7 +98,6 @@ class KalshiModule(PebbleModule):
             ticker = p.get('ticker', p.get('event_ticker', '?'))
             yes_count = p.get('yes_contracts', 0)
             no_count  = p.get('no_contracts', 0)
-            realized  = p.get('realized_pnl', 0) / 100 if p.get('realized_pnl') else 0
             unrealized = p.get('unrealized_pnl', 0) / 100 if p.get('unrealized_pnl') else 0
             side = f'YES x{yes_count}' if yes_count else f'NO x{no_count}'
             pnl = f'P&L: ${unrealized:+.2f}' if unrealized != 0 else ''

@@ -6,7 +6,6 @@ import datetime
 
 import requests
 
-import crab_config
 from .base import PebbleModule
 
 _API_BASE = 'https://slack.com/api'
@@ -379,7 +378,6 @@ class SlackModule(PebbleModule):
 # ── Slack watcher thread (background poll) ────────────────────────────────────
 
 import threading
-import time as _time
 from typing import Callable
 
 

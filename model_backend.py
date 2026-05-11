@@ -194,7 +194,8 @@ class ModelBackend:
                     ],
                 }
 
-        resp = c.chat.completions.create(model=self.model, messages=msgs)
+        resp = c.chat.completions.create(model=self.model, messages=msgs,
+                                          max_tokens=1024)
         return resp.choices[0].message.content or ''
 
 

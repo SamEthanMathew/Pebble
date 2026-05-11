@@ -25,8 +25,8 @@ def test_add_and_lookup_by_name(pebble_home):
 
 def test_lookup_precedence_exact_alias_over_substring(pebble_home):
     import entity_store
-    a = entity_store.add('course', '15-122', aliases=['pic'])
-    b = entity_store.add('course', '21-122', aliases=['calc'])
+    entity_store.add('course', '15-122', aliases=['pic'])
+    entity_store.add('course', '21-122', aliases=['calc'])
 
     # exact alias 'pic' resolves to a, even though 'pic' is a substring of nothing
     hit = entity_store.lookup('pic')

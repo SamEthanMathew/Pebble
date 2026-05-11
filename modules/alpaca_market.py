@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import requests
 
-import crab_config
 from .base import PebbleModule
 
 _PAPER_BASE = 'https://paper-api.alpaca.markets'
@@ -109,12 +108,6 @@ class AlpacaMarketModule(PebbleModule):
 
             equity    = float(acct.get('equity', 0))
             cash      = float(acct.get('cash', 0))
-            positions = int(acct.get('position_market_value', 0) and
-                            len(acct) > 0 and acct.get('long_market_value', 0) != '0')
-
-            # Use position count from a separate call if available in response
-            # The account response doesn't directly give position count —
-            # we surface equity and cash, which are the key figures.
             market_open = not acct.get('trading_blocked', False)
             status_note = '' if market_open else ' (market closed)'
 

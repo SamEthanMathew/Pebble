@@ -136,7 +136,6 @@ class CryptoModule(PebbleModule):
             item = c.get('item', {})
             name   = item.get('name', '?')
             symbol = item.get('symbol', '').upper()
-            score  = item.get('score', 0)
             lines.append(f'  {i}. {name} ({symbol})')
         return '\n'.join(lines)
 

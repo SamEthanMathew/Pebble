@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import urllib.request
 import urllib.parse
-import datetime
 from .base import PebbleModule
 
 
@@ -166,6 +165,5 @@ class DiscordModule(PebbleModule):
         for dm in dms[:limit]:
             recipients = dm.get('recipients', [{}])
             name = recipients[0].get('username', '?') if recipients else '?'
-            last_msg = dm.get('last_message_id', '')
             lines.append(f'  {name} (channel: {dm.get("id", "?")})')
         return '\n'.join(lines)

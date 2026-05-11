@@ -8,7 +8,6 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
-import crab_config
 from .base import PebbleModule
 
 DEFAULT_FEEDS = [
@@ -118,7 +117,6 @@ class NewsFeedModule(PebbleModule):
 
             source_part = f' ({source})' if source else ''
             time_part   = f' — {ago}' if ago else ''
-            desc_part   = f'\n   {description}' if description else ''
 
             lines.append(f'{i}. {title}{source_part}')
             if description or ago:

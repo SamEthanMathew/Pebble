@@ -130,7 +130,7 @@ class NotificationDispatcher:
         title = payload.get('title', 'Untitled event')
         mins  = int(payload.get('minutes_away', 0))
         loc   = payload.get('location', '') or ''
-        body  = (f'Starting now' if mins == 0
+        body  = ('Starting now' if mins == 0
                  else (f'In {mins} min' + (f' · {loc[:40]}' if loc else '')))
         urgency = 'critical' if mins <= 2 else 'high'
         self.submit(Notification(

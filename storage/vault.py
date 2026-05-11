@@ -23,8 +23,7 @@ import sys
 import tempfile
 import threading
 import time
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
@@ -32,11 +31,8 @@ import frontmatter as fm_lib  # python-frontmatter
 
 from .note import Note, parse_note, iter_md_files
 from .provenance import (
-    PebbleBlock,
-    ProvenanceViolation,
     assert_preserves_provenance,
     effective_source,
-    extract_pebble_blocks,
     is_user_authored,
     mark_user_edited,
     promote_to_user,
@@ -459,11 +455,31 @@ class Vault:
         return fm_lib.dumps(post)
 
     def _atomic_write(self, target: Path, content: str) -> None:
-        """Windows-safe atomic write: write to tmp + os.replace with retry."""
+        """Windows-safe atomic write: write to tmp + os.replace with retry.
+
+        Tmp files are staged in ~/.pebble/workspace/tmp/ rather than the vault
+        directory so they don't pollute Obsidian when a write fails to replace.
+        """
         target.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=target.name + '.', suffix='.tmp', dir=str(target.parent),
-        )
+        tmp_dir = Path.home() / '.pebble' / 'workspace' / 'tmp'
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        # Fall back to target dir if cross-volume replace would fail
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=target.name + '.', suffix='.tmp', dir=str(tmp_dir),
+            )
+            # os.replace requires same volume on Windows — if different drive,
+            # tmp must live in target.parent
+            if tmp_path[0].lower() != str(target)[0].lower():
+                os.close(fd)
+                os.unlink(tmp_path)
+                fd, tmp_path = tempfile.mkstemp(
+                    prefix=target.name + '.', suffix='.tmp', dir=str(target.parent),
+                )
+        except OSError:
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=target.name + '.', suffix='.tmp', dir=str(target.parent),
+            )
         try:
             with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
                 f.write(content)

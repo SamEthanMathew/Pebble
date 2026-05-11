@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
 
 
 def _make_module(name='probe', default_tiers=None, send_target='to'):
     """Build a tiny PebbleModule for autonomy tests."""
-    from modules.base import PebbleModule, ActionTier
+    from modules.base import PebbleModule
 
     class _Probe(PebbleModule):
         _default_tiers = default_tiers or {}
@@ -49,6 +48,31 @@ def test_ledger_per_target_for_outbound(pebble_home):
     assert not ledger.is_first_time('gmail.send:a@b.com')
     # Different recipient = still first-time
     assert ledger.is_first_time('gmail.send:c@d.com')
+
+
+def test_approval_handler_exception_returns_error(pebble_home):
+    """If the approval UI handler raises, the proposal is NOT silently denied —
+    autonomy logs to audit and returns status=error so the caller sees it."""
+    from modules.base import ActionTier
+    from autonomy import Autonomy
+    from planners.base import Proposal
+    import audit
+
+    mod = _make_module('probe', {'do': ActionTier.ASK})
+
+    def bad_handler(_p):
+        raise RuntimeError('UI crashed')
+
+    a = Autonomy(modules=[mod], approval_handler=bad_handler)
+    out = a.route(Proposal(module='probe', action='do', args={'q': 'x'},
+                            source='test'))
+    assert out.status == 'error'
+    assert 'approval_handler raised' in (out.error or '')
+    assert mod.calls == []   # NEVER executed on handler crash
+    # An audit row was written
+    rows = audit.tail(20)
+    assert any('approval_handler raised' in str(r.get('result'))
+               for r in rows)
 
 
 def test_autonomy_auto_tier_executes(pebble_home):
