@@ -10,6 +10,8 @@ to spin its "thinking" indicator and run the work off-thread.
 
 from __future__ import annotations
 
+import json
+
 import datetime
 import shlex
 from dataclasses import dataclass
@@ -59,8 +61,16 @@ HELP_TEXT = """**Commands**
 - `/entity-suggestions --accept <email>` — accept one
 - `/entity-suggestions --dismiss <email>` — dismiss one
 
+**Vault**
+- `/my-world [hints…]` — what Pebble would inject into a briefing context
+- `/proposals` — pending vault-edit proposals from Pebble
+- `/proposals --accept <id>` / `--dismiss <id>` / `--postpone <id>` — act on one
+- `/promote-note <path>` — flip a Pebble-authored note to user-authored
+- `/trace <topic>` — chronological mentions across daily notes
+- `/migrate-memory [--apply]` — move ~/.pebble/memory.json into the vault
+
 **Other**
-- `/forget <pattern>` — remove memory entries
+- `/forget <pattern>` — queue memory-removal proposals
 - `/dry-run [on|off]` — toggle dry-run mode
 - `/help` — this list
 """
@@ -167,6 +177,172 @@ def handle(text: str) -> str | AsyncCommand | None:
 
     if cmd == '/help':
         return HELP_TEXT
+
+    # ── Vault commands (Phase D) ─────────────────────────────────────────────
+
+    if cmd == '/proposals':
+        from storage import ProposalQueue
+        q = ProposalQueue()
+        if not args:
+            pending = q.list_pending()
+            if not pending:
+                return ('_No pending proposals._\n\n'
+                        'Pebble will queue suggestions here when it wants to edit '
+                        'or remove user-authored notes.')
+            lines = [f'**{len(pending)} pending proposal{"s" if len(pending) != 1 else ""}**', '']
+            for p in pending:
+                summary = (p.note or p.payload.get('rationale')
+                            or json.dumps(p.payload)[:120] if p.payload else '')[:120]
+                lines.append(f'- `{p.id}` **{p.kind}** on `{p.note_id}` — {summary}')
+            lines.append('')
+            lines.append('Accept with `/proposals --accept <id>`, dismiss with `/proposals --dismiss <id>`.')
+            return '\n'.join(lines)
+
+        if args[0] == '--accept' and len(args) >= 2:
+            pid = args[1]
+            existing = q.get(pid)
+            if existing is None:
+                return f'No proposal with id `{pid}`.'
+            if existing.kind == 'forget':
+                # Apply the forget: queue the actual deletion as another proposal,
+                # OR (for now) just mark accepted; physical deletion is left for
+                # the user via Obsidian. Pebble never auto-deletes files.
+                ok = q.accept(pid)
+                if not ok:
+                    return f'Could not accept `{pid}`.'
+                return (f'✓ Accepted forget proposal `{pid}` on `{existing.note_id}`. '
+                        f'Open the note in Obsidian and delete it yourself — Pebble '
+                        f'does not auto-delete user files.')
+            ok = q.accept(pid)
+            return (f'✓ Accepted `{pid}`. (Note: applying the edit is the '
+                    f'caller\'s responsibility — for now, this just marks the '
+                    f'proposal accepted in the queue.)' if ok else
+                    f'Could not accept `{pid}`.')
+
+        if args[0] == '--dismiss' and len(args) >= 2:
+            pid = args[1]
+            ok = q.dismiss(pid)
+            return f'✓ Dismissed `{pid}`.' if ok else f'No proposal with id `{pid}`.'
+
+        if args[0] == '--postpone' and len(args) >= 2:
+            pid = args[1]
+            ok = q.postpone(pid)
+            return f'✓ Postponed `{pid}`.' if ok else f'No proposal with id `{pid}`.'
+
+        return ('Usage:\n'
+                '  `/proposals`                  list pending\n'
+                '  `/proposals --accept <id>`    accept\n'
+                '  `/proposals --dismiss <id>`   dismiss\n'
+                '  `/proposals --postpone <id>`  postpone')
+
+    if cmd == '/promote-note':
+        if not args:
+            return 'Usage: `/promote-note <note-path>`. Example: `/promote-note 07 - People/Amber Li`'
+        path = ' '.join(args)
+        try:
+            import crab_config
+            from storage import Vault, NoteNotFound
+            vault_path = (crab_config.get_module_config('obsidian') or {}).get('vault_path')
+            if not vault_path:
+                return 'No Obsidian vault configured. Run `/connect obsidian <path>` first.'
+            v = Vault(vault_path, autostart_watcher=False)
+            try:
+                note = v.promote_note(path)
+                return (f'✓ Promoted `{note.id}` to `source: user`.'
+                        if note.frontmatter.get('promoted_from_pebble')
+                        else f'`{note.id}` is already user-authored — no change.')
+            finally:
+                v.stop()
+        except Exception as e:
+            return f'Promote failed: {e}'
+
+    if cmd == '/my-world':
+        # Dump a ContextBundle so the user can see what Pebble would inject
+        # into a planner system prompt for a generic trigger.
+        try:
+            import crab_config
+            from storage import Vault, EntityResolver, load_context, render_bundle_markdown
+            vault_path = (crab_config.get_module_config('obsidian') or {}).get('vault_path')
+            if not vault_path:
+                return 'No Obsidian vault configured. Run `/connect obsidian <path>` first.'
+            hints = args if args else []
+            v = Vault(vault_path, autostart_watcher=False)
+            try:
+                bundle = load_context(
+                    trigger={'type': 'my_world_inspection',
+                              'title': 'User-requested context dump',
+                              'entity_hints': list(hints)},
+                    vault=v, resolver=EntityResolver(v),
+                    depth=1, max_tokens=4000, include_daily_notes=5,
+                    provenance='all',
+                )
+                rendered = render_bundle_markdown(bundle, max_chars=4000)
+                stats = (f'\n\n---\n_Bundle stats:_ '
+                          f'{len(bundle.entities)} entities · '
+                          f'{len(bundle.neighbor_notes)} neighbors · '
+                          f'{len(bundle.daily_note_excerpts)} daily excerpts · '
+                          f'{len(bundle.preferences)} preferences · '
+                          f'{len(bundle.goals)} goals · '
+                          f'~{bundle.total_tokens} tokens')
+                return rendered + stats
+            finally:
+                v.stop()
+        except Exception as e:
+            return f'/my-world failed: {e}'
+
+    if cmd == '/trace':
+        if not args:
+            return ('Usage: `/trace <topic>` — find how an idea has evolved across '
+                    'your daily notes (e.g. `/trace pyroki`).')
+        topic = ' '.join(args)
+        try:
+            import crab_config
+            from storage import Vault
+            vault_path = (crab_config.get_module_config('obsidian') or {}).get('vault_path')
+            if not vault_path:
+                return 'No Obsidian vault configured.'
+            v = Vault(vault_path, autostart_watcher=False)
+            try:
+                # Search across daily notes specifically (chronological evolution)
+                daily_hits = [h for h in v.search(topic, k=30)
+                              if h.note.id.startswith('Daily/')
+                              or h.note.id.startswith('01 - Journal/')]
+                daily_hits.sort(key=lambda h: h.note.id)  # ascending date
+                if not daily_hits:
+                    return f'_No mentions of "{topic}" in daily notes._'
+                lines = [f'**Trace: "{topic}"** ({len(daily_hits)} mentions, chronological)', '']
+                for h in daily_hits[:20]:
+                    lines.append(f'**{h.note.id}**')
+                    lines.append(h.excerpt[:300])
+                    lines.append('')
+                return '\n'.join(lines)
+            finally:
+                v.stop()
+        except Exception as e:
+            return f'/trace failed: {e}'
+
+    if cmd == '/migrate-memory':
+        if '--apply' not in args:
+            try:
+                from migrate_memory_to_vault import main as _migrate_main
+                # Capture stdout
+                import io, contextlib
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    _migrate_main(['--dry-run'])
+                return f'```\n{buf.getvalue()[:3000]}\n```\n\nRe-run with `/migrate-memory --apply` to execute.'
+            except Exception as e:
+                return f'Migration dry-run failed: {e}'
+        # apply mode
+        try:
+            from migrate_memory_to_vault import main as _migrate_main
+            import io, contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = _migrate_main(['--apply'])
+            return f'```\n{buf.getvalue()[:3000]}\n```\n\n{"✓ Done." if code == 0 else "⚠ Errors during migration."}'
+        except Exception as e:
+            return f'Migration failed: {e}'
 
     # ── module surface (sidebar tabs) ────────────────────────────────────────
 

@@ -85,6 +85,10 @@ class Vault:
         self._lock        = threading.RLock()
         self._observer    = None  # watchdog Observer (set in _start_watcher)
         self._loaded      = False
+        # path → most-recent self-write timestamp (epoch). Used to suppress
+        # mark_edited_by_user on the watchdog event that fires from our own writes.
+        self._recent_writes: dict[Path, float] = {}
+        self._self_write_suppress_seconds = 5.0
         if autostart_watcher:
             self._ensure_loaded()
             self._start_watcher()
@@ -160,7 +164,29 @@ class Vault:
                     return
                 if any(part.lower() in {i.lower() for i in outer._ignore} for part in rel_parts):
                     return
-                outer._refresh_if_stale(p)
+
+                # If this event corresponds to a recent self-write, suppress
+                # the "user edited a Pebble note" detection — otherwise we'd
+                # mark our own writes as user edits and loop.
+                now = time.time()
+                last_self = outer._recent_writes.get(p)
+                is_self_write = (
+                    last_self is not None
+                    and (now - last_self) < outer._self_write_suppress_seconds
+                )
+
+                refreshed = outer._refresh_if_stale(p)
+                if refreshed is None:
+                    return
+
+                # If the refreshed note is source: pebble and the event wasn't
+                # from us, flag it as user-edited.
+                if not is_self_write and refreshed.frontmatter.get('source') == 'pebble':
+                    if 'source_edited_by_user' not in refreshed.frontmatter:
+                        try:
+                            outer.mark_edited_by_user(p)
+                        except Exception:
+                            pass
 
         observer = Observer()
         observer.schedule(_Handler(), str(self.root), recursive=True)
@@ -436,6 +462,9 @@ class Vault:
                         raise
                     time.sleep(delay)
                     delay *= 2
+            # Record self-write so the watchdog suppresses mark_edited_by_user
+            # for events fired by our own writes.
+            self._recent_writes[target] = time.time()
         except Exception:
             try:
                 os.unlink(tmp_path)

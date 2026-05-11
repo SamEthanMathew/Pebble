@@ -254,6 +254,121 @@ def db_path() -> Path:
 
 # ── Bootstrap scaffolding (full implementation in pebble-integrations Phase 1.5) ──
 
+def repopulate_from_vault(vault=None, *, dry_run: bool = False) -> dict[str, int]:
+    """Repopulate the SQLite entity index from the Obsidian vault.
+
+    Vault becomes the source of truth; SQLite is the fast index. Each call:
+      1. Lists vault notes tagged with one of: people, project, course, recurring, account
+         OR notes living under the matching numbered folder (07 - People/, 05 - Projects/,
+         02 - Academia/).
+      2. Upserts each into the entities table keyed on path/basename.
+      3. Removes SQLite rows whose source `legacy_id` no longer matches a vault note.
+
+    Returns a dict with counts: {'upserted': N, 'removed': M, 'scanned': K}.
+    """
+    if vault is None:
+        try:
+            import crab_config
+            from storage import Vault
+            path = (crab_config.get_module_config('obsidian') or {}).get('vault_path', '')
+            if not path:
+                return {'upserted': 0, 'removed': 0, 'scanned': 0, 'skipped': 'no_vault'}
+            vault = Vault(path, autostart_watcher=False)
+            owned = True
+        except Exception:
+            return {'upserted': 0, 'removed': 0, 'scanned': 0, 'skipped': 'no_vault'}
+    else:
+        owned = False
+
+    upserted, removed, scanned = 0, 0, 0
+    try:
+        init()
+        # Snapshot existing entities-from-vault rows so we can prune later
+        existing_legacy: dict[str, str] = {}  # legacy_id (vault path) → entity_id
+        with _connect() as conn:
+            _migrate(conn)
+            for row in conn.execute(
+                "SELECT id, payload FROM entities WHERE payload LIKE '%\"_from_vault\":true%'"
+            ).fetchall():
+                try:
+                    payload = json.loads(row[1])
+                    legacy  = payload.get('vault_path')
+                    if legacy:
+                        existing_legacy[legacy] = row[0]
+                except Exception:
+                    continue
+
+        seen_vault_paths: set[str] = set()
+        for note in vault.list():
+            tags = set(note.tags)
+            ent_type = None
+            if 'people' in tags or note.id.startswith('07 - People/'):
+                ent_type = 'person'
+            elif 'project' in tags or note.id.startswith('05 - Projects/'):
+                ent_type = 'project'
+            elif 'course' in tags or note.id.startswith('02 - Academia/'):
+                ent_type = 'course'
+            elif 'recurring' in tags:
+                ent_type = 'recurring'
+            elif 'account' in tags:
+                ent_type = 'account'
+            else:
+                continue
+
+            scanned += 1
+            seen_vault_paths.add(note.id)
+
+            # Extract aliases from frontmatter (might be a CSV string OR list)
+            fm_aliases = note.frontmatter.get('aliases', []) or []
+            if isinstance(fm_aliases, str):
+                fm_aliases = [a.strip() for a in fm_aliases.split(',') if a.strip()]
+            aliases = [str(a) for a in fm_aliases if a]
+
+            payload = {
+                '_from_vault':  True,
+                'vault_path':   note.id,
+                'tags':         list(note.tags),
+                'source':       note.source,
+            }
+            # Copy a few common frontmatter fields that are useful to query
+            for k in ('course_id', 'semester', 'status', 'role', 'context', 'email'):
+                if k in note.frontmatter:
+                    payload[k] = note.frontmatter[k]
+
+            if dry_run:
+                upserted += 1
+                continue
+
+            existing_id = existing_legacy.get(note.id)
+            if existing_id:
+                update(existing_id, {
+                    'name':    note.title,
+                    'aliases': aliases,
+                    'payload': payload,
+                })
+            else:
+                add(ent_type, note.title, aliases=aliases, payload=payload)
+            upserted += 1
+
+        # Prune rows whose vault path no longer exists / no longer qualifies
+        for vault_path, eid in existing_legacy.items():
+            if vault_path not in seen_vault_paths and not dry_run:
+                delete(eid)
+                removed += 1
+    finally:
+        if owned:
+            try: vault.stop()
+            except Exception: pass
+
+    audit.append({
+        'module': 'entity_store', 'action': 'repopulate_from_vault',
+        'args':   {'dry_run': dry_run},
+        'result': {'upserted': upserted, 'removed': removed, 'scanned': scanned},
+        'tier':   'auto', 'source': 'repopulate_from_vault',
+    })
+    return {'upserted': upserted, 'removed': removed, 'scanned': scanned}
+
+
 def bootstrap_from_gmail(scan_days: int = 30, top_n: int = 20) -> list[dict]:
     """First-run scan of recent Gmail to propose top senders for classification.
 

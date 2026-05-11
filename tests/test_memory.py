@@ -1,96 +1,151 @@
-"""Memory v1.5: word-overlap + recency-weighted recall."""
+"""Memory module (vault-backed): remember routes by category, recall uses
+vault.search, forget queues proposals (never auto-deletes)."""
 
 from __future__ import annotations
 
+from pathlib import Path
 
-def test_remember_then_list(pebble_home):
+import pytest
+
+
+@pytest.fixture
+def vault_memory(tmp_path, monkeypatch):
+    """Configure a temp vault and redirect ~/.pebble to a per-test home."""
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path / 'home')
+    home = tmp_path / 'home' / '.pebble'
+    home.mkdir(parents=True, exist_ok=True)
+
+    vault = tmp_path / 'Vault'
+    (vault / '.obsidian').mkdir(parents=True)
+
+    # Configure crab_config to know about the vault BEFORE importing the
+    # memory module (since modules are reloaded by conftest's pebble_home
+    # fixture in other tests, but here we're standalone)
+    import crab_config, importlib
+    importlib.reload(crab_config)
+    crab_config.set_module_config('obsidian',
+                                   {'enabled': True, 'vault_path': str(vault)})
+    import modules.memory as mem
+    importlib.reload(mem)
+    return vault
+
+
+def test_remember_fact_creates_aggregate_note(vault_memory):
     from modules.memory import MemoryModule
     m = MemoryModule({'enabled': True})
-    m.execute(action='remember', text='I prefer Python over Java', category='preference')
-    out = m.execute(action='list')
-    assert 'Python' in out
+    out = m.execute(action='remember', text='I prefer Python over Java',
+                    category='fact')
+    assert 'Got it' in out
+    facts = vault_memory / '_pebble_imports' / 'facts.md'
+    assert facts.exists()
+    text = facts.read_text(encoding='utf-8')
+    assert 'I prefer Python over Java' in text
+    assert 'source: pebble' in text
 
 
-def test_recall_returns_overlap_match(pebble_home):
-    from modules.memory import MemoryModule, search
-    m = MemoryModule({'enabled': True})
-    m.execute(action='remember', text='Sarah Chen leads the data team',  category='person')
-    m.execute(action='remember', text='I prefer dark mode in everything', category='preference')
-
-    hits = search('Who is Sarah?')
-    assert hits
-    assert hits[0]['text'].startswith('Sarah Chen')
-
-
-def test_recall_recency_breaks_overlap_tie(pebble_home, monkeypatch):
-    """Two entries with identical overlap — newer wins."""
-    import datetime
-    from modules import memory as mem_module
-
-    # Insert two entries, one old one new, with identical query overlap
-    items = [
-        {'id': 1, 'text': 'pebble color blue', 'category': 'fact',
-         'created': '2024-01-01', 'last_accessed': '2024-01-01'},
-        {'id': 2, 'text': 'pebble color green', 'category': 'fact',
-         'created': datetime.date.today().isoformat(),
-         'last_accessed': datetime.date.today().isoformat()},
-    ]
-    mem_module._save(items)
-
-    hits = mem_module.search('pebble color')
-    assert hits
-    assert hits[0]['text'].endswith('green')
-
-
-def test_recall_touches_last_accessed(pebble_home):
-    """Returning an entry refreshes last_accessed so it stays warm."""
-    import datetime
-    from modules import memory as mem_module
-
-    today = datetime.date.today().isoformat()
-    items = [
-        {'id': 1, 'text': 'tag X', 'category': 'fact',
-         'created': '2024-01-01', 'last_accessed': '2024-01-01'},
-    ]
-    mem_module._save(items)
-    hits = mem_module.search('tag')
-    assert hits
-    saved = mem_module._load()
-    assert saved[0]['last_accessed'] == today
-
-
-def test_no_overlap_returns_no_results(pebble_home):
-    from modules.memory import MemoryModule, search
-    MemoryModule({'enabled': True}).execute(
-        action='remember', text='taco truck on Forbes is great', category='place')
-    assert search('quantum chromodynamics') == []
-
-
-def test_migration_adds_last_accessed(pebble_home):
-    """Old entries without last_accessed get one on first load."""
-    from atomic_io import write_json
-    import modules.memory as mem_module
-    write_json(mem_module._MEMORY_PATH,
-               [{'id': 1, 'text': 'old', 'category': 'fact', 'created': '2023-01-01'}])
-    items = mem_module._load()
-    assert items[0]['last_accessed'] == '2023-01-01'
-
-
-def test_forget_removes_matching(pebble_home):
+def test_remember_person_creates_single_note(vault_memory):
     from modules.memory import MemoryModule
     m = MemoryModule({'enabled': True})
-    m.execute(action='remember', text='delete me')
-    m.execute(action='remember', text='keep me')
-    out = m.execute(action='forget', text='delete')
-    assert 'Removed 1' in out
+    m.execute(action='remember',
+              text='Sarah Chen leads the data team at OpenAI',
+              category='person')
+    found = list((vault_memory / '07 - People').glob('*.md'))
+    assert found
+    text = found[0].read_text(encoding='utf-8')
+    assert 'Sarah Chen' in text
+    assert 'source: pebble' in text
+
+
+def test_remember_preference_groups_by_topic(vault_memory):
+    from modules.memory import MemoryModule
+    m = MemoryModule({'enabled': True})
+    m.execute(action='remember', text='I prefer dark mode',
+              category='preference')
+    found = list((vault_memory / '50_preferences').glob('*.md'))
+    assert found  # at least one preference note created
+
+
+def test_recall_finds_remembered_content(vault_memory):
+    from modules.memory import MemoryModule, search
+    m = MemoryModule({'enabled': True})
+    m.execute(action='remember',
+              text='Sarah Chen leads the data team',
+              category='person')
+    hits = search('Sarah')
+    assert hits
+    assert any('Sarah' in h['text'] for h in hits)
+
+
+def test_recall_returns_empty_for_nothing_matching(vault_memory):
+    from modules.memory import search
+    assert search('quantum chromodynamics zzz') == []
+
+
+def test_recall_via_execute(vault_memory):
+    from modules.memory import MemoryModule
+    m = MemoryModule({'enabled': True})
+    m.execute(action='remember', text='Pebble uses Obsidian as memory',
+              category='fact')
+    out = m.execute(action='recall', text='Obsidian')
+    assert 'Obsidian' in out
+
+
+def test_list_returns_memory_notes(vault_memory):
+    from modules.memory import MemoryModule
+    m = MemoryModule({'enabled': True})
+    m.execute(action='remember', text='Some fact', category='fact')
+    m.execute(action='remember', text='Some pref', category='preference')
     out = m.execute(action='list')
-    assert 'keep me' in out
-    assert 'delete me' not in out
+    assert 'Memory' in out or 'note' in out.lower()
 
 
-def test_default_tiers(pebble_home):
+def test_forget_queues_proposal_not_delete(vault_memory):
+    """forget should NEVER auto-delete — it queues a proposal."""
+    from modules.memory import MemoryModule
+    from storage import ProposalQueue
+    m = MemoryModule({'enabled': True})
+    m.execute(action='remember', text='Forget about this', category='fact')
+
+    out = m.execute(action='forget', text='Forget')
+    # No file deleted; proposals queued
+    assert 'Queued' in out or 'proposal' in out.lower()
+    pending = ProposalQueue().list_pending()
+    assert pending
+    # The note still exists on disk
+    facts = vault_memory / '_pebble_imports' / 'facts.md'
+    assert facts.exists()
+
+
+def test_forget_with_no_match(vault_memory):
+    from modules.memory import MemoryModule
+    m = MemoryModule({'enabled': True})
+    out = m.execute(action='forget', text='nothing-like-this')
+    assert 'Nothing' in out or 'No' in out
+
+
+def test_no_vault_gives_helpful_message(tmp_path, monkeypatch):
+    """If Obsidian isn't configured, memory writes return a useful message
+    instead of crashing."""
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path / 'home')
+    (tmp_path / 'home' / '.pebble').mkdir(parents=True, exist_ok=True)
+
+    import crab_config, importlib
+    importlib.reload(crab_config)
+    # Explicitly NO obsidian vault path configured
+    crab_config.set_module_config('obsidian', {'enabled': False, 'vault_path': ''})
+    import modules.memory as mem
+    importlib.reload(mem)
+
+    out = mem.MemoryModule({'enabled': True}).execute(
+        action='remember', text='something', category='fact')
+    assert 'vault' in out.lower()
+
+
+def test_default_tiers_match_spec(vault_memory):
     from modules.base import ActionTier
     from modules.memory import MemoryModule
     m = MemoryModule({'enabled': True})
     assert m.action_tier('recall')   == ActionTier.AUTO
     assert m.action_tier('remember') == ActionTier.NOTIFY
+    # forget tightened to ASK in vault-backed rewrite (never silently delete)
+    assert m.action_tier('forget')   == ActionTier.ASK
