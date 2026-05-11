@@ -28,6 +28,80 @@ class OAuthNotConfigured(RuntimeError):
     """Raised when Google OAuth client credentials cannot be located."""
 
 
+def _wrap_installed(client_id: str, client_secret: str, extra: dict | None = None) -> dict:
+    """Build a Google `installed app` config from a raw id/secret pair."""
+    base = {
+        'client_id':     client_id,
+        'client_secret': client_secret,
+        'auth_uri':      _AUTH_URI,
+        'token_uri':     _TOKEN_URI,
+        'redirect_uris': ['http://localhost'],
+    }
+    if extra:
+        # Merge in any caller-provided fields (e.g. project_id from a downloaded JSON)
+        base.update({k: v for k, v in extra.items() if k not in base or extra.get(k)})
+    return {'installed': base}
+
+
+def parse_oauth_paste(text: str) -> dict | None:
+    """Parse user-pasted OAuth credentials into Google's `installed app` shape.
+
+    Accepts:
+      - Full JSON downloaded from Google Cloud Console (`{"installed": {…}}` or flat
+        `{"client_id":…, "client_secret":…}`).
+      - `client_id|client_secret` pipe-separated pair.
+
+    Returns the normalized config dict, or None if the input is unparseable or
+    missing required fields. Trims whitespace; never raises.
+    """
+    if not text:
+        return None
+    s = text.strip()
+    if not s:
+        return None
+
+    # Try JSON first
+    try:
+        data = json.loads(s)
+    except json.JSONDecodeError:
+        data = None
+
+    if isinstance(data, dict):
+        if 'installed' in data and isinstance(data['installed'], dict) \
+                and data['installed'].get('client_id') and data['installed'].get('client_secret'):
+            inner = data['installed']
+            return _wrap_installed(inner['client_id'], inner['client_secret'], inner)
+        if data.get('client_id') and data.get('client_secret'):
+            return _wrap_installed(data['client_id'], data['client_secret'], data)
+        # Some downloads use 'web' as the top-level key — accept it too
+        if 'web' in data and isinstance(data['web'], dict) \
+                and data['web'].get('client_id') and data['web'].get('client_secret'):
+            inner = data['web']
+            return _wrap_installed(inner['client_id'], inner['client_secret'], inner)
+        return None
+
+    # Pipe-separated pair: "client_id|client_secret"
+    if '|' in s:
+        parts = [p.strip() for p in s.split('|', 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            return _wrap_installed(parts[0], parts[1])
+
+    return None
+
+
+def save_oauth_paste(text: str) -> bool:
+    """Parse + write OAuth credentials to SECRETS_PATH. Returns True on success."""
+    cfg = parse_oauth_paste(text)
+    if cfg is None:
+        return False
+    SECRETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SECRETS_PATH.write_text(
+        json.dumps(cfg, indent=2),
+        encoding='utf-8',
+    )
+    return True
+
+
 def _load_client_config() -> dict:
     """Resolve OAuth client config from env vars or secrets file.
 
@@ -37,30 +111,20 @@ def _load_client_config() -> dict:
     env_id     = os.environ.get('PEBBLE_GOOGLE_CLIENT_ID', '').strip()
     env_secret = os.environ.get('PEBBLE_GOOGLE_CLIENT_SECRET', '').strip()
     if env_id and env_secret:
-        return {'installed': {
-            'client_id':     env_id,
-            'client_secret': env_secret,
-            'auth_uri':      _AUTH_URI,
-            'token_uri':     _TOKEN_URI,
-            'redirect_uris': ['http://localhost'],
-        }}
+        return _wrap_installed(env_id, env_secret)
 
     if SECRETS_PATH.exists():
         try:
-            data = json.loads(SECRETS_PATH.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError) as exc:
+            raw = SECRETS_PATH.read_text(encoding='utf-8')
+        except OSError as exc:
             raise OAuthNotConfigured(
                 f'Failed to read {SECRETS_PATH}: {exc}'
             ) from exc
-        if 'installed' in data and 'client_id' in data['installed']:
-            return data
-        if 'client_id' in data and 'client_secret' in data:
-            return {'installed': {**data,
-                                  'auth_uri':      data.get('auth_uri', _AUTH_URI),
-                                  'token_uri':     data.get('token_uri', _TOKEN_URI),
-                                  'redirect_uris': data.get('redirect_uris', ['http://localhost'])}}
-        raise OAuthNotConfigured(
-            f'{SECRETS_PATH} does not contain a valid Google OAuth client config.')
+        cfg = parse_oauth_paste(raw)
+        if cfg is None:
+            raise OAuthNotConfigured(
+                f'{SECRETS_PATH} does not contain a valid Google OAuth client config.')
+        return cfg
 
     raise OAuthNotConfigured(
         'Google OAuth client credentials are not configured.\n'

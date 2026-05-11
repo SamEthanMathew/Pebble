@@ -34,7 +34,8 @@ def pebble_home(tmp_path, monkeypatch):
                      'first_time_ledger', 'autonomy', 'approval_queue',
                      'cache', 'scraper', 'planners.exam_prep',
                      'modules.memory', 'modules.reminders',
-                     'modules.slack_module', 'audit_reader',
+                     'modules.slack_module', 'modules.google_auth',
+                     'audit_reader',
                      'idle_detect', 'planners.wrapup', 'feedback',
                      'entity_suggest', 'error_reporter', 'setup_wizard',
                      'chat_commands'):

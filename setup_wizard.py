@@ -193,6 +193,7 @@ class SetupWizard:
         self._build_welcome()
         self._build_scan()
         self._build_models()
+        self._build_google()
         self._build_done()
         self._show('welcome')
 
@@ -328,7 +329,7 @@ class SetupWizard:
         tk.Frame(p, bg=C['border'], height=1).pack(side='bottom', fill='x')
         bot = tk.Frame(p, bg=C['bg'])
         bot.pack(side='bottom', fill='x', padx=44, pady=12)
-        self._continue_btn = self._btn(bot, 'Continue  →', lambda: self._show('done'))
+        self._continue_btn = self._btn(bot, 'Continue  →', lambda: self._show('google'))
         self._continue_btn.pack(side='right')
         self._continue_btn.config(state='disabled', bg=C['muted'])
 
@@ -811,7 +812,91 @@ class SetupWizard:
         ).pack(side='right', padx=4)
         tk.Frame(self._list_frame, bg=C['border'], height=1).pack(fill='x')
 
-    # ── PAGE 4: Done ───────────────────────────────────────────────────────────
+    # ── PAGE 4: Google OAuth (optional) ────────────────────────────────────────
+
+    def _build_google(self):
+        p = self._page('google')
+
+        # bottom button row — packed first so side='bottom' reserves space
+        tk.Frame(p, bg=C['border'], height=1).pack(side='bottom', fill='x')
+        bot = tk.Frame(p, bg=C['bg'])
+        bot.pack(side='bottom', fill='x', padx=44, pady=12)
+        save_btn = self._btn(bot, 'Save & continue  →', self._save_google)
+        save_btn.pack(side='right')
+        skip_btn = self._btn(bot, 'Skip for now', self._skip_google, primary=False)
+        skip_btn.pack(side='right', padx=(0, 8))
+
+        tk.Label(p, text='Connect Gmail & Calendar',
+                 bg=C['bg'], fg=C['text'],
+                 font=('Segoe UI', 17, 'bold')).pack(pady=(22, 3))
+        tk.Label(p, text='Optional — Pebble works without it, but morning briefings need this.',
+                 bg=C['bg'], fg=C['dim'], font=('Segoe UI', 10)).pack()
+
+        # Instructions card
+        card = tk.Frame(p, bg=C['card'], padx=16, pady=12)
+        card.pack(fill='x', padx=44, pady=(10, 8))
+
+        steps = [
+            '1.  Open Google Cloud Console (button below) — sign in with the Google account you want to use.',
+            '2.  Create or select a project, then enable the Gmail API and Google Calendar API.',
+            "3.  OAuth consent screen → 'External' → 'Testing' is fine.",
+            "4.  Credentials → Create credentials → OAuth client ID → Application type: Desktop.",
+            '5.  Download the JSON file Google gives you, then paste its contents below.',
+        ]
+        for line in steps:
+            tk.Label(card, text=line, bg=C['card'], fg=C['text'],
+                     font=('Segoe UI', 9), wraplength=W - 130,
+                     justify='left', anchor='w').pack(fill='x', pady=2)
+
+        link_row = tk.Frame(p, bg=C['bg'])
+        link_row.pack(fill='x', padx=44, pady=(0, 8))
+        self._btn(link_row, 'Open Google Cloud Console  ↗',
+                  lambda: webbrowser.open(
+                      'https://console.cloud.google.com/apis/credentials'),
+                  primary=False, small=True).pack(side='left')
+
+        # Paste area
+        tk.Label(p, text="Paste the JSON Google gave you  (or  client_id|client_secret):",
+                 bg=C['bg'], fg=C['dim'],
+                 font=('Segoe UI', 9)).pack(anchor='w', padx=44, pady=(4, 2))
+
+        text_wrap = tk.Frame(p, bg=C['border'], padx=1, pady=1)
+        text_wrap.pack(fill='x', padx=44)
+        self._google_text = tk.Text(text_wrap, height=5,
+                                     bg=C['card'], fg=C['text'],
+                                     insertbackground=C['text'],
+                                     font=('Consolas', 9),
+                                     relief='flat', bd=6, wrap='word')
+        self._google_text.pack(fill='x')
+
+        self._google_status = tk.Label(p, text='', bg=C['bg'], fg=C['dim'],
+                                        font=('Segoe UI', 9))
+        self._google_status.pack(anchor='w', padx=44, pady=(6, 0))
+
+    def _save_google(self):
+        from modules.google_auth import save_oauth_paste, SECRETS_PATH
+        text = self._google_text.get('1.0', 'end').strip()
+        if not text:
+            self._google_status.config(
+                text="Paste credentials, or click 'Skip for now' to add them later.",
+                fg=C['err'])
+            return
+        if save_oauth_paste(text):
+            self._google_status.config(
+                text=f'✓  Saved to {SECRETS_PATH}', fg=C['teal'])
+            crab_config.set_value('google_oauth_setup_skipped', False)
+            self.root.after(450, lambda: self._show('done'))
+        else:
+            self._google_status.config(
+                text="Couldn't parse — make sure you pasted the full JSON or "
+                     '`client_id|client_secret`.',
+                fg=C['err'])
+
+    def _skip_google(self):
+        crab_config.set_value('google_oauth_setup_skipped', True)
+        self._show('done')
+
+    # ── PAGE 5: Done ───────────────────────────────────────────────────────────
 
     def _build_done(self):
         p = self._page('done')
