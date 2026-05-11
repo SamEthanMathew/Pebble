@@ -164,40 +164,48 @@ class ObsidianModule(PebbleModule):
         return f'No note found matching "{path}".'
 
     def _action_write(self, path: str, content: str, title: str) -> str:
+        """LLM-initiated note write — the user told their LLM to write this,
+        so the resulting note carries `source: user` (not pebble)."""
         if not content.strip():
             return 'No content provided for write.'
-        # Determine target path (write path stays direct in Phase A; Phase B
-        # will route through Vault.create_note for provenance stamping)
+        vault = _vault_for(str(self._vault_path))
+        if vault is None:
+            return 'Obsidian vault not available.'
+
         if path.strip():
-            target = self._vault_path / path
-            if not path.endswith('.md'):
-                target = target.with_suffix('.md')
+            rel = path.strip()
         elif title.strip():
             safe_title = re.sub(r'[<>:"/\\|?*]', '-', title.strip())
-            target = self._vault_path / 'Pebble' / f'{safe_title}.md'
+            rel = f'Pebble/{safe_title}.md'
         else:
             return 'Provide a path or title for the note to write.'
+
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding='utf-8')
-            return f'Note saved to {target}'
+            note = vault.create_note(
+                rel, body=content, frontmatter={},
+                source='user', trigger='llm_tool_write', confidence=1.0,
+            )
+            return f'Note saved to {note.path}'
         except Exception as e:
             return f'Error writing note: {e}'
 
     def _action_append_daily(self, content: str) -> str:
+        """Append to today's Daily/YYYY-MM-DD.md via Vault, wrapped in a
+        [!pebble]+ callout with provenance markers."""
         if not content.strip():
             return 'No content provided to append.'
-        today = date.today().isoformat()
-        daily_path = self._vault_path / 'Daily' / f'{today}.md'
+        vault = _vault_for(str(self._vault_path))
+        if vault is None:
+            return 'Obsidian vault not available.'
+
         try:
-            daily_path.parent.mkdir(parents=True, exist_ok=True)
-            if daily_path.exists():
-                existing = daily_path.read_text(encoding='utf-8', errors='ignore')
-                new_text = existing.rstrip('\n') + '\n\n' + content.strip() + '\n'
-            else:
-                new_text = f'# {today}\n\n{content.strip()}\n'
-            daily_path.write_text(new_text, encoding='utf-8')
-            return f'Appended to daily note: {daily_path}'
+            daily = vault.daily_note('today', create_if_missing=True)
+            note  = vault.append_block(
+                daily.id, content,
+                trigger='append_daily', confidence=1.0,
+                label='pebble', title=date.today().isoformat(),
+            )
+            return f'Appended to daily note: {note.path}'
         except Exception as e:
             return f'Error updating daily note: {e}'
 

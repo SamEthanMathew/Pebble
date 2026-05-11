@@ -158,11 +158,12 @@ def test_daily_note_resolves_today(temp_vault):
     v.stop()
 
 
-def test_daily_note_missing_raises_in_phase_a(temp_vault):
+def test_daily_note_missing_raises_without_create(temp_vault):
+    """create_if_missing=False (default) raises NoteNotFound for missing daily notes."""
     from storage import Vault, NoteNotFound
     v = Vault(temp_vault, autostart_watcher=False)
     with pytest.raises(NoteNotFound):
-        v.daily_note('2020-01-01', create_if_missing=True)
+        v.daily_note('2020-01-01', create_if_missing=False)
     v.stop()
 
 

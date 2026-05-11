@@ -1,34 +1,48 @@
-"""Vault — the read-side facade over an Obsidian markdown vault.
+"""Vault — facade over an Obsidian markdown vault.
 
-Phase A delivers only the read surface (`read`, `list`, `search`,
-`find_by_frontmatter`, `daily_note`, `recent_daily_notes`). Phase B adds
-`create_note` / `append_block` / promotion through a single write chokepoint.
+Phase A: read surface (`read`, `list`, `search`, `find_by_frontmatter`,
+`daily_note`, `recent_daily_notes`).
 
-In-memory cache is built lazily on first call and refreshed by a watchdog
-listener (with a polling fallback for Windows reliability). Cache invariants:
-
-  - `_by_id[id]   = Note` for every .md under vault_root (ignoring `.obsidian/`).
-  - `_by_path[p]  = Note` mirrors _by_id, keyed by absolute Path.
-  - `_mtimes[p]   = st_mtime` last seen, used by the polling fallback.
-
-The cache holds parsed Notes, but the canonical truth is the file on disk.
-On read, we re-check mtime; if it's newer than the cached value, we re-parse
-that file before returning. This is cheap and avoids serving stale content
-when the watchdog misses an event.
+Phase B: write surface (`create_note`, `append_block`, `promote_note`,
+`propose_edit`) through a single chokepoint that:
+  1. validates path is under vault_root
+  2. parses old content + frontmatter
+  3. enforces `assert_preserves_provenance` (refuses to strip pebble markers)
+  4. writes atomically (write-tmp + os.replace, with Windows retry)
+  5. appends a row to `~/.pebble/workspace/write_log.jsonl`
+  6. updates the in-memory cache
 """
 
 from __future__ import annotations
 
 import datetime
+import json
+import os
 import re
+import sys
+import tempfile
 import threading
 import time
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
+import frontmatter as fm_lib  # python-frontmatter
+
 from .note import Note, parse_note, iter_md_files
-from .provenance import effective_source, is_user_authored
+from .provenance import (
+    PebbleBlock,
+    ProvenanceViolation,
+    assert_preserves_provenance,
+    effective_source,
+    extract_pebble_blocks,
+    is_user_authored,
+    mark_user_edited,
+    promote_to_user,
+    stamp_block,
+    stamp_frontmatter,
+)
 
 
 # Provenance filters that callers can request.
@@ -327,11 +341,16 @@ class Vault:
         try:
             return self.read(rel)
         except NoteNotFound:
-            if create_if_missing:
-                raise NoteNotFound(
-                    f'{rel} does not exist; Phase B will handle create_if_missing'
-                )
-            raise
+            if not create_if_missing:
+                raise
+            # Phase B: create a minimal scaffolded daily note (source: pebble)
+            return self.create_note(
+                rel,
+                body=f'# {d.isoformat()}\n\n',
+                frontmatter={'date': d.isoformat(), 'tags': ['daily']},
+                trigger='daily_note_scaffold',
+                confidence=1.0,
+            )
 
     def recent_daily_notes(self, days: int = 7) -> list[Note]:
         """Most recent daily notes (newest first), up to `days` entries.
@@ -349,6 +368,323 @@ class Vault:
                     out.append(n)
         out.sort(key=lambda n: n.id, reverse=True)
         return out[:days]
+
+    # ── Write surface (Phase B) ──────────────────────────────────────────────
+
+    @property
+    def _workspace_dir(self) -> Path:
+        """~/.pebble/workspace/ — operational state for the storage layer."""
+        d = Path.home() / '.pebble' / 'workspace'
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @property
+    def _write_log_path(self) -> Path:
+        return self._workspace_dir / 'write_log.jsonl'
+
+    def _resolve_target(self, note_id_or_path: str) -> Path:
+        """Convert an id or relative path into an absolute Path under the vault.
+
+        Raises ValueError if the resolved path escapes vault_root.
+        """
+        s = note_id_or_path.strip().replace('\\', '/')
+        if not s:
+            raise ValueError('Empty note id / path')
+        if s.startswith('/') or (len(s) > 2 and s[1] == ':'):  # absolute
+            target = Path(s).resolve()
+        else:
+            if not s.endswith('.md'):
+                s = s + '.md'
+            target = (self.root / s).resolve()
+        # Enforce containment
+        try:
+            target.relative_to(self.root)
+        except ValueError as e:
+            raise ValueError(
+                f'Target path escapes vault root: {target} (vault: {self.root})'
+            ) from e
+        return target
+
+    def _serialize_note(self, frontmatter: dict[str, Any], body: str) -> str:
+        """Serialize frontmatter + body to a .md file content string.
+        Uses python-frontmatter so YAML rendering is consistent.
+        """
+        post = fm_lib.Post(body or '', **frontmatter)
+        return fm_lib.dumps(post)
+
+    def _atomic_write(self, target: Path, content: str) -> None:
+        """Windows-safe atomic write: write to tmp + os.replace with retry."""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=target.name + '.', suffix='.tmp', dir=str(target.parent),
+        )
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
+                f.write(content)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            delay = 0.02
+            for attempt in range(5):
+                try:
+                    os.replace(tmp_path, target)
+                    break
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(delay)
+                    delay *= 2
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    def _log_write(self, action: str, target: Path, *,
+                   trigger: str = '', confidence: float | None = None,
+                   extra: dict[str, Any] | None = None) -> None:
+        """Append a row to write_log.jsonl. Failures are non-fatal."""
+        try:
+            row = {
+                'timestamp':  datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+                'action':     action,
+                'path':       str(target),
+                'rel':        target.relative_to(self.root).as_posix() if target.is_absolute() else str(target),
+                'trigger':    trigger,
+                'confidence': confidence,
+            }
+            if extra:
+                row.update(extra)
+            with self._write_log_path.open('a', encoding='utf-8') as f:
+                f.write(json.dumps(row, default=str, ensure_ascii=False))
+                f.write('\n')
+        except Exception as e:
+            print(f'[vault] write_log append failed: {e}', file=sys.stderr)
+
+    def _write_file(
+        self,
+        target: Path,
+        *,
+        new_frontmatter: dict[str, Any],
+        new_body: str,
+        action_label: str,
+        trigger: str,
+        confidence: float,
+    ) -> Note:
+        """The single write chokepoint. ALL writes go through here.
+
+        Reads any existing file at `target`, runs the provenance invariant
+        check (refuses to strip pebble markers), writes atomically, logs,
+        and updates the cache.
+        """
+        # Defense in depth — target must still be under vault root
+        try:
+            target.resolve().relative_to(self.root)
+        except ValueError as e:
+            raise ValueError(
+                f'Refusing to write outside vault: {target}'
+            ) from e
+
+        # Read existing content if any
+        old_frontmatter: dict[str, Any] | None = None
+        old_body:        str | None = None
+        if target.exists():
+            try:
+                raw  = target.read_text(encoding='utf-8', errors='replace')
+                post = fm_lib.loads(raw)
+                old_frontmatter = dict(post.metadata or {})
+                old_body        = post.content or ''
+            except Exception:
+                old_frontmatter = {}
+                old_body = target.read_text(encoding='utf-8', errors='replace')
+
+        # Invariant: never strip provenance markers from existing content
+        assert_preserves_provenance(
+            old_frontmatter=old_frontmatter,
+            new_frontmatter=new_frontmatter,
+            old_body=old_body,
+            new_body=new_body,
+        )
+
+        content = self._serialize_note(new_frontmatter, new_body)
+        self._atomic_write(target, content)
+
+        self._log_write(
+            action_label, target,
+            trigger=trigger, confidence=confidence,
+            extra={'effective_source': effective_source(new_frontmatter)},
+        )
+
+        # Update cache from the now-persisted file
+        with self._lock:
+            note = self._index_path(target)
+        return note
+
+    def create_note(
+        self,
+        path: str,
+        body: str,
+        frontmatter: dict[str, Any] | None = None,
+        *,
+        trigger: str = 'unspecified',
+        confidence: float = 0.5,
+        source: Literal['pebble', 'user'] = 'pebble',
+        note: str = '',
+    ) -> Note:
+        """Create (or update) a note. Default is `source: pebble` (Pebble-authored).
+
+        Pass `source='user'` for the rare case where Pebble is writing on the
+        user's behalf via an LLM-tool call (preserves the legacy behavior of
+        ObsidianModule._action_write).
+
+        If the target already has `source: pebble` frontmatter, the existing
+        provenance is preserved (stamp_frontmatter is a no-op on the source
+        field when it's already there). If the target has `source: user`,
+        the write is refused via the invariant check.
+        """
+        target = self._resolve_target(path)
+        body   = body or ''
+        fm     = dict(frontmatter or {})
+
+        if source == 'pebble':
+            fm = stamp_frontmatter(fm, trigger=trigger,
+                                    confidence=confidence, note=note)
+        else:
+            # source: user — caller explicitly wants user-authored
+            fm.setdefault('source', 'user')
+
+        return self._write_file(
+            target,
+            new_frontmatter=fm,
+            new_body=body,
+            action_label='create_note',
+            trigger=trigger,
+            confidence=confidence,
+        )
+
+    def append_block(
+        self,
+        note_id_or_path: str,
+        content: str,
+        *,
+        trigger: str,
+        confidence: float,
+        label: str = 'pebble',
+        title: str = '',
+    ) -> Note:
+        """Append a [!label]+ callout block (with provenance comment) to a note.
+
+        If the note doesn't exist, raises NoteNotFound (callers should pair
+        with create_note or daily_note(create_if_missing=True) first).
+        """
+        target = self._resolve_target(note_id_or_path)
+        if not target.exists():
+            raise NoteNotFound(f'Cannot append to missing note: {target}')
+
+        # Read existing
+        raw  = target.read_text(encoding='utf-8', errors='replace')
+        post = fm_lib.loads(raw)
+        old_fm  = dict(post.metadata or {})
+        old_body = post.content or ''
+
+        # If user has edited a Pebble-authored note, flag it as mixed FIRST
+        # (separate write — keeps invariant checks straightforward)
+        new_fm = dict(old_fm)
+        if effective_source(old_fm) == 'pebble':
+            # No user edit detected here; but the source: pebble marker is
+            # preserved by mark_user_edited being a no-op when not needed.
+            pass
+
+        block = stamp_block(content, trigger=trigger, confidence=confidence,
+                            label=label, title=title)
+        new_body = old_body.rstrip() + ('\n\n' if old_body.strip() else '') + block + '\n'
+
+        return self._write_file(
+            target,
+            new_frontmatter=new_fm,
+            new_body=new_body,
+            action_label='append_block',
+            trigger=trigger,
+            confidence=confidence,
+        )
+
+    def promote_note(self, note_id_or_path: str) -> Note:
+        """Flip a `source: pebble` note to `source: user` via promote_to_user.
+        Idempotent: a note already at `source: user` is returned unchanged.
+        """
+        target = self._resolve_target(note_id_or_path)
+        if not target.exists():
+            raise NoteNotFound(f'Cannot promote missing note: {target}')
+
+        raw  = target.read_text(encoding='utf-8', errors='replace')
+        post = fm_lib.loads(raw)
+        old_fm   = dict(post.metadata or {})
+        old_body = post.content or ''
+
+        if effective_source(old_fm) == 'user':
+            with self._lock:
+                return self._refresh_if_stale(target) or self._index_path(target)
+
+        new_fm = promote_to_user(old_fm)
+        return self._write_file(
+            target,
+            new_frontmatter=new_fm, new_body=old_body,
+            action_label='promote_note',
+            trigger='promote', confidence=1.0,
+        )
+
+    def mark_edited_by_user(self, note_id_or_path: str) -> Note | None:
+        """Mark a `source: pebble` note as user-edited (mixed provenance).
+
+        Called by the watchdog event handler when a Pebble note changes on
+        disk for a reason other than a recent Vault.write. No-op for non-pebble
+        notes. Returns the updated Note, or None if the file is gone.
+        """
+        try:
+            target = self._resolve_target(note_id_or_path)
+        except ValueError:
+            return None
+        if not target.exists():
+            return None
+        raw  = target.read_text(encoding='utf-8', errors='replace')
+        try:
+            post = fm_lib.loads(raw)
+            old_fm   = dict(post.metadata or {})
+            old_body = post.content or ''
+        except Exception:
+            return None
+
+        if old_fm.get('source') != 'pebble':
+            return None
+        if 'source_edited_by_user' in old_fm:
+            return self._refresh_if_stale(target)
+
+        new_fm = mark_user_edited(old_fm)
+        return self._write_file(
+            target,
+            new_frontmatter=new_fm, new_body=old_body,
+            action_label='mark_edited_by_user',
+            trigger='user_edit_detected', confidence=1.0,
+        )
+
+    def propose_edit(self, note_id_or_path: str, edit: dict[str, Any]) -> str:
+        """Queue a proposed edit to a user-authored note.
+
+        Returns a proposal ID. The edit is NOT applied — `proposal_queue.accept`
+        is the only path to apply it. This is the spec §2.5 contract: Pebble
+        never silently rewrites user-authored content.
+        """
+        from .proposal_queue import ProposalQueue
+        queue = ProposalQueue(self._workspace_dir / 'proposals.jsonl')
+        return queue.add({
+            'kind':      'edit',
+            'note_id':   note_id_or_path,
+            'edit':      edit,
+            'created_at': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+        })
 
     # ── Stats / introspection ────────────────────────────────────────────────
 

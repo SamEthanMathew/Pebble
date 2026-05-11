@@ -40,6 +40,14 @@ from .provenance import (
     stamp_frontmatter,
 )
 from .vault import Hit, NoteNotFound, Provenance, Vault
+from .proposal_queue import Proposal, ProposalQueue
+from .entity_resolver import EntityResolver, Resolution
+from .context_loader import (
+    ContextBundle,
+    EntityRef,
+    load_context,
+    render_bundle_markdown,
+)
 
 __all__ = [
     # Note layer
@@ -53,4 +61,10 @@ __all__ = [
     'effective_source', 'is_user_authored',
     'has_provenance_markers', 'extract_pebble_blocks',
     'ProvenanceViolation', 'assert_preserves_provenance',
+    # Proposal queue
+    'Proposal', 'ProposalQueue',
+    # Entity resolver
+    'EntityResolver', 'Resolution',
+    # Context loader
+    'ContextBundle', 'EntityRef', 'load_context', 'render_bundle_markdown',
 ]
