@@ -26,6 +26,11 @@ google-api-python-client>=2.140,<3.0
 # ── Context window management ──────────────────────────────────────────────────
 tiktoken>=0.7,<1.0
 
+# ── Storage layer (Obsidian vault as persistent storage) ──────────────────────
+python-frontmatter>=1.1,<2.0
+rapidfuzz>=3.5,<4.0
+watchdog>=4.0,<7.0
+
 # ── Phase 3 data + scraping (install when entity store / scraper ship) ─────────
 # sqlite-vec>=0.1
 # trafilatura>=1.12

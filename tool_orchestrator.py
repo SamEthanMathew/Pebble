@@ -19,7 +19,9 @@ MAX_ROUNDS = 8
 
 # Ollama model tags known to support native tool calling
 _NATIVE_OLLAMA = [
-    'gemma', 'llama3', 'mistral', 'mixtral',
+    # Models with confirmed Ollama tool-calling support. gemma2/gemma3 are
+    # excluded — they 400 with "does not support tools".
+    'llama3', 'llama4', 'mistral', 'mixtral',
     'qwen2', 'qwen3', 'phi3', 'phi4',
     'command-r', 'deepseek', 'solar', 'firefunction',
 ]
@@ -29,7 +31,7 @@ You have access to these tools — use them whenever they would help answer the 
 {tool_lines}
 
 To call a tool, output EXACTLY this format on its own line:
-TOOL: tool_name({"param1": "value1", "param2": "value2"})
+TOOL: tool_name({{"param1": "value1", "param2": "value2"}})
 
 For simple single-param tools: TOOL: tool_name(argument)
 For tools with no arguments: TOOL: tool_name()
@@ -105,7 +107,7 @@ class ToolOrchestrator:
         msgs  = list(messages)
 
         for _ in range(MAX_ROUNDS):
-            kw: dict = dict(model=self.backend.model, max_tokens=1024,
+            kw: dict = dict(model=self.backend.model, max_tokens=4096,
                             messages=msgs, tools=tools)
             if system:
                 kw['system'] = system

@@ -142,8 +142,8 @@ class SchedulePlanner(BasePlanner):
     # ── output parsing ────────────────────────────────────────────────────────
 
     def parse_output(self, llm_text: str, inputs: dict[str, Any]) -> dict[str, Any]:
-        cleaned = _strip_code_fence(llm_text)
-        data = json.loads(cleaned)
+        from planners.base import extract_json_object
+        data = extract_json_object(llm_text)
 
         # Light shape validation — per contracts.md §7a payload schema
         if not isinstance(data, dict):

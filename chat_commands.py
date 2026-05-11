@@ -24,6 +24,24 @@ class AsyncCommand:
 
 HELP_TEXT = """**Commands**
 
+**Connections**
+- `/connect google` — sign in to Google (Gmail + Calendar)
+- `/connect obsidian <path>` — set Obsidian vault folder
+- `/connect canvas <base-url> <access-token>` — Canvas LMS
+- `/connect notion <api-key>` — Notion integration
+- `/disconnect <google|obsidian|canvas|notion>` — undo
+- `/status` — what's connected
+
+**Views (sidebar tabs)**
+- `/tasks` — open tasks
+- `/reminders` — pending reminders
+- `/gmail` — recent unread mail
+- `/calendar` — upcoming events
+- `/notes [query]` — Obsidian (list root or search)
+- `/slack-watch [<workspace>] [channels|--add ch|--remove ch|--clear]` — pick channels for popups
+- `/slack-workspaces` — list configured Slack workspaces
+
+**Daily use**
 - `/briefing` — generate a morning briefing (runs planners)
 - `/wrapup` — daily wrap-up (appends to journal)
 - `/exam-prep <course-name> <YYYY-MM-DD>` — generate study plan for one exam
@@ -32,16 +50,103 @@ HELP_TEXT = """**Commands**
 - `/errors [N]` — last N error rows (default 10)
 - `/review-drafts` — list dry-run previews
 - `/review-drafts --clear` — delete all dry-run previews
+
+**Knowledge graph**
 - `/add-course <code> [name]` — add a course entity
 - `/add-person <email> [name]` — add a person entity
 - `/entities [type]` — list known entities
 - `/entity-suggestions` — show senders Pebble proposes adding
 - `/entity-suggestions --accept <email>` — accept one
 - `/entity-suggestions --dismiss <email>` — dismiss one
+
+**Other**
 - `/forget <pattern>` — remove memory entries
 - `/dry-run [on|off]` — toggle dry-run mode
 - `/help` — this list
 """
+
+
+# ── Connection helpers (used by /connect, /disconnect, /status) ────────────────
+
+def _enable_module(name: str, fields: dict | None = None) -> None:
+    """Set enabled=True and merge any provided fields for a module."""
+    import crab_config
+    cfg = crab_config.get_module_config(name) or {}
+    cfg['enabled'] = True
+    if fields:
+        cfg.update(fields)
+    crab_config.set_module_config(name, cfg)
+
+
+def _disable_module(name: str) -> None:
+    import crab_config
+    cfg = crab_config.get_module_config(name) or {}
+    cfg['enabled'] = False
+    crab_config.set_module_config(name, cfg)
+
+
+def _google_token_path():
+    from pathlib import Path
+    return Path.home() / '.pebble' / 'google_token.json'
+
+
+def _run_module_action(module_name: str, action: str,
+                       *, fallback_actions: list[str] | None = None,
+                       missing_hint: str = '',
+                       **kwargs) -> str:
+    """Invoke an action on an active module; return its text output as Markdown.
+
+    On failure, the module's own error string is returned (modules don't raise —
+    they return strings starting with 'Unknown action' etc.).
+    """
+    try:
+        from modules import get_active_modules
+    except Exception as e:
+        return f'Module registry unavailable: {e}'
+
+    mod = next((m for m in get_active_modules() if m.name == module_name), None)
+    if mod is None:
+        suffix = f'\n\n_{missing_hint}_' if missing_hint else ''
+        return f'**{module_name}** is not enabled (or not configured yet).{suffix}'
+
+    actions = [action] + (fallback_actions or [])
+    last = None
+    for a in actions:
+        try:
+            out = mod.execute(action=a, **kwargs)
+            text = str(out) if out is not None else ''
+            if text.lower().startswith('unknown action'):
+                last = text
+                continue
+            return text
+        except Exception as e:
+            last = f'`{module_name}.{a}` raised: {e}'
+            continue
+    return last or f'**{module_name}** has no supported action.'
+
+
+def _connection_status() -> dict:
+    import crab_config
+    p = _google_token_path()
+    cfgs = lambda n: crab_config.get_module_config(n) or {}
+
+    obsidian_path = cfgs('obsidian').get('vault_path', '')
+    canvas_url    = cfgs('canvas').get('base_url', '')
+    canvas_token  = cfgs('canvas').get('access_token', '')
+    notion_key    = cfgs('notion').get('notion_api_key', '')
+
+    return {
+        'google':   {'connected': p.exists(),
+                     'gmail_enabled': bool(cfgs('gmail').get('enabled')),
+                     'gcal_enabled':  bool(cfgs('gcal').get('enabled'))},
+        'obsidian': {'connected': bool(obsidian_path), 'path': obsidian_path,
+                     'enabled': bool(cfgs('obsidian').get('enabled'))},
+        'canvas':   {'connected': bool(canvas_url and canvas_token),
+                     'url': canvas_url,
+                     'enabled': bool(cfgs('canvas').get('enabled'))},
+        'notion':   {'connected': bool(notion_key),
+                     'enabled': bool(cfgs('notion').get('enabled'))},
+    }
 
 
 def handle(text: str) -> str | AsyncCommand | None:
@@ -62,6 +167,286 @@ def handle(text: str) -> str | AsyncCommand | None:
 
     if cmd == '/help':
         return HELP_TEXT
+
+    # ── module surface (sidebar tabs) ────────────────────────────────────────
+
+    if cmd == '/tasks':
+        return _run_module_action('tasks', 'pending', fallback_actions=['list'],
+                                   missing_hint='Tasks module always on. If this fails, see /errors.')
+
+    if cmd == '/reminders':
+        return _run_module_action('reminders', 'list')
+
+    if cmd == '/slack-workspaces':
+        # List configured Slack workspaces and what's watched in each.
+        import crab_config
+        cfg = crab_config.get_module_config('slack') or {}
+        ws  = cfg.get('workspaces', {}) or {}
+        if not ws:
+            return ('No Slack workspaces configured. '
+                    'Run `/connect slack <token>` to add one.')
+        lines = [f'**Slack workspaces** (active: `{cfg.get("active_workspace", "?")}`)', '']
+        for name, w in ws.items():
+            ch_raw  = w.get('important_channels', '')
+            chans   = [c.strip().lstrip('#') for c in ch_raw.split(',') if c.strip()]
+            token_ok = bool((w.get('access_token') or '').strip())
+            line = f'- **{name}** · token {"✓" if token_ok else "✗"} · watching '
+            line += (', '.join(f'`#{c}`' for c in chans) if chans else '_(none)_')
+            lines.append(line)
+        return '\n'.join(lines)
+
+    if cmd == '/slack-watch':
+        # New surface (multi-workspace):
+        #   /slack-watch                                  → list everything
+        #   /slack-watch <ws>                             → show that workspace's channels
+        #   /slack-watch <ws> ch1,ch2,…                   → REPLACE channels for workspace
+        #   /slack-watch <ws> --add <ch>                  → add one
+        #   /slack-watch <ws> --remove <ch>               → remove one
+        #   /slack-watch <ws> --clear                     → clear
+        # Single-workspace shortcut (when only one configured): the workspace arg is optional.
+        import crab_config
+        cfg = crab_config.get_module_config('slack') or {}
+        workspaces = cfg.get('workspaces', {}) or {}
+
+        # No args → list across all workspaces
+        if not args:
+            if not workspaces:
+                return ('No Slack workspaces configured. '
+                        'Run `/connect slack <token>` first.')
+            lines = ['**Watched Slack channels per workspace**', '']
+            for ws_name, w in workspaces.items():
+                ch_raw = w.get('important_channels', '')
+                chans  = [c.strip().lstrip('#') for c in ch_raw.split(',') if c.strip()]
+                lines.append(
+                    f'- **{ws_name}**: ' +
+                    (', '.join(f'`#{c}`' for c in chans) if chans else '_(none)_')
+                )
+            lines.append('')
+            lines.append('Examples:')
+            lines.append('- `/slack-watch r-pad g-team,announcements`')
+            lines.append('- `/slack-watch scotty-labs --add proj-pebble`')
+            lines.append('- `/slack-watch scotty-labs --clear`')
+            return '\n'.join(lines)
+
+        # Identify the workspace arg
+        ws_name = args[0].lower()
+        rest    = args[1:]
+
+        # Backward-compat: single workspace and first arg isn't a known workspace → assume rest
+        if workspaces and ws_name not in workspaces:
+            if len(workspaces) == 1:
+                ws_name = next(iter(workspaces.keys()))
+                rest    = args
+            else:
+                return (f'Unknown workspace `{ws_name}`. '
+                        f'Configured: ' + ', '.join(f'`{k}`' for k in workspaces) + '. '
+                        f'Use `/slack-workspaces` to inspect.')
+
+        if not workspaces:
+            return ('No Slack workspaces configured. '
+                    'Run `/connect slack <token>` to add one.')
+
+        # Pull current channels for this workspace
+        ws_cfg     = dict(workspaces.get(ws_name, {}))
+        current_raw = ws_cfg.get('important_channels', '') or ''
+        current = [c.strip().lstrip('#') for c in current_raw.split(',') if c.strip()]
+
+        def _save(new_channels: list[str]) -> None:
+            ws_cfg['important_channels'] = ','.join(new_channels)
+            workspaces[ws_name] = ws_cfg
+            cfg['workspaces']   = workspaces
+            crab_config.set_module_config('slack', cfg)
+
+        if not rest:
+            if not current:
+                return (f'No channels watched in `{ws_name}` yet.\n\n'
+                        f'Use `/slack-watch {ws_name} <ch1>,<ch2>` to start.')
+            return (f'`{ws_name}` is watching: ' +
+                    ', '.join(f'`#{c}`' for c in current) +
+                    '\n\n_Restart Pebble to apply changes (watcher reads config at startup)._')
+
+        if rest[0] == '--clear':
+            _save([])
+            return f'✓ Cleared watched channels in `{ws_name}`. Restart Pebble.'
+
+        if rest[0] == '--add' and len(rest) >= 2:
+            ch = rest[1].lstrip('#')
+            if ch not in current:
+                current.append(ch)
+            _save(current)
+            return (f'✓ Added `#{ch}` to `{ws_name}`. Now watching: ' +
+                    ', '.join(f'`#{c}`' for c in current) +
+                    '\n\n_Restart Pebble._')
+
+        if rest[0] == '--remove' and len(rest) >= 2:
+            ch = rest[1].lstrip('#')
+            current = [c for c in current if c != ch]
+            _save(current)
+            remaining = ', '.join(f'`#{c}`' for c in current) if current else 'none'
+            return (f'✓ Removed `#{ch}` from `{ws_name}`. Now watching: {remaining}\n\n'
+                    '_Restart Pebble._')
+
+        # Replace mode
+        new_set = [c.strip().lstrip('#') for c in ' '.join(rest).replace(',', ' ').split() if c.strip()]
+        _save(new_set)
+        if not new_set:
+            return f'_({ws_name}: empty list — no channels watched)_'
+        return (f'✓ `{ws_name}` watching: ' + ', '.join(f'`#{c}`' for c in new_set) +
+                '\n\n_Restart Pebble._')
+
+    if cmd == '/gmail':
+        return _run_module_action('gmail', 'unread',
+                                   missing_hint='Run `/connect google` to enable Gmail.')
+
+    if cmd == '/calendar':
+        # gcal.get_events with no args returns upcoming events (per module convention)
+        return _run_module_action('gcal', 'get_events',
+                                   missing_hint='Run `/connect google` to enable Calendar.')
+
+    if cmd == '/notes':
+        if args:
+            return _run_module_action('obsidian', 'search', query=' '.join(args),
+                                       missing_hint='Set your Obsidian vault in Settings.')
+        return _run_module_action('obsidian', 'list_folder',
+                                   missing_hint='Set your Obsidian vault in Settings.')
+
+    if cmd == '/status':
+        s = _connection_status()
+        g = s['google']
+        google_line = (f'✅  **Google** — connected (Gmail enabled={g["gmail_enabled"]}, '
+                       f'Calendar enabled={g["gcal_enabled"]})'
+                       if g['connected']
+                       else '❌  **Google** — not connected. Run `/connect google`.')
+        ob = s['obsidian']
+        ob_line = (f'✅  **Obsidian** — `{ob["path"]}` (enabled={ob["enabled"]})'
+                   if ob['connected']
+                   else '❌  **Obsidian** — no vault. Run `/connect obsidian <path>`.')
+        ca = s['canvas']
+        ca_line = (f'✅  **Canvas** — `{ca["url"]}` (enabled={ca["enabled"]})'
+                   if ca['connected']
+                   else '❌  **Canvas** — not connected. Run `/connect canvas <url> <token>`.')
+        no = s['notion']
+        no_line = (f'✅  **Notion** — token present (enabled={no["enabled"]})'
+                   if no['connected']
+                   else '❌  **Notion** — no API key. Run `/connect notion <api-key>`.')
+        return '\n'.join(['**Connection status**', '',
+                          google_line, ob_line, ca_line, no_line])
+
+    if cmd == '/connect':
+        if not args:
+            return ('Usage: `/connect <service>`. Services: '
+                    '`google`, `obsidian <path>`, `canvas <url> <token>`, `notion <api-key>`.')
+        service = args[0].lower()
+
+        if service == 'google':
+            def _run():
+                try:
+                    from modules.google_auth import GoogleServices
+                    GoogleServices()  # opens browser, writes token on success
+                except Exception as e:
+                    return f'Google sign-in failed: {e}'
+                # Auto-enable both Gmail and GCal modules so they start working
+                _enable_module('gmail')
+                _enable_module('gcal')
+                return ('✅  Google connected. Gmail and Calendar modules enabled. '
+                        'A restart is needed before the Gmail watcher starts; '
+                        '`/briefing` works right now.')
+            return AsyncCommand(label='Opening Google sign-in…', fn=_run)
+
+        if service == 'obsidian':
+            if len(args) < 2:
+                return ('Usage: `/connect obsidian <vault-path>`. '
+                        'Example: `/connect obsidian "C:\\Users\\you\\Documents\\MyVault"`')
+            from pathlib import Path
+            path = ' '.join(args[1:])  # in case path has spaces
+            p = Path(path).expanduser()
+            if not p.exists():
+                return f'Vault path does not exist: `{p}`'
+            if not p.is_dir():
+                return f'Vault path is not a directory: `{p}`'
+            _enable_module('obsidian', {'vault_path': str(p)})
+            return f'✅  Obsidian connected — vault at `{p}`. Module enabled.'
+
+        if service == 'canvas':
+            if len(args) < 3:
+                return ('Usage: `/connect canvas <base-url> <access-token>`. '
+                        'Example: `/connect canvas https://canvas.cmu.edu 14234~abc...`')
+            url, token = args[1], args[2]
+            if not url.startswith('http'):
+                return f'Canvas URL must start with http(s)://. Got: `{url}`'
+            _enable_module('canvas', {'base_url': url.rstrip('/'), 'access_token': token})
+            return f'✅  Canvas connected at `{url}`. Module enabled.'
+
+        if service == 'notion':
+            if len(args) < 2:
+                return ('Usage: `/connect notion <api-key>`. '
+                        'Get one at https://www.notion.so/my-integrations.')
+            api_key = args[1]
+            _enable_module('notion', {'notion_api_key': api_key})
+            return '✅  Notion connected. Module enabled.'
+
+        if service == 'slack':
+            if len(args) < 2:
+                return ('Usage: `/connect slack <token> [default-channel]`. '
+                        'Token: User OAuth (xoxp-…) or Bot (xoxb-…). '
+                        'Get one at api.slack.com/apps → your app → OAuth & Permissions.')
+            token = args[1]
+            default_channel = args[2] if len(args) >= 3 else ''
+            fields = {'bot_token': token}
+            if default_channel:
+                fields['default_channel'] = default_channel.lstrip('#')
+            _enable_module('slack', fields)
+            return '✅  Slack connected. Module enabled.'
+
+        if service == 'github':
+            if len(args) < 2:
+                return ('Usage: `/connect github <personal-access-token> [owner/repo]`. '
+                        'Get one at github.com/settings/tokens (scopes: repo, read:user, gist).')
+            pat = args[1]
+            default_repo = args[2] if len(args) >= 3 else ''
+            fields = {'personal_access_token': pat}
+            if default_repo:
+                fields['default_repo'] = default_repo
+            _enable_module('github', fields)
+            return '✅  GitHub connected. Module enabled.'
+
+        if service == 'spotify':
+            if len(args) < 3:
+                return ('Usage: `/connect spotify <client-id> <client-secret>`. '
+                        'Get them at developer.spotify.com/dashboard → your app → '
+                        'Settings (the Client Secret needs "Show client secret" → copy). '
+                        'OAuth will fire on the first playback request.')
+            cid, secret = args[1], args[2]
+            _enable_module('spotify', {
+                'client_id':     cid,
+                'client_secret': secret,
+                'redirect_uri':  'http://localhost:8888/callback',
+            })
+            return ('✅  Spotify credentials saved. A browser will open for OAuth '
+                    'the first time you ask Pebble to play something.')
+
+        return (f'Unknown service: `{service}`. Try `google`, `obsidian`, `canvas`, '
+                f'`notion`, `slack`, `github`, or `spotify`.')
+
+    if cmd == '/disconnect':
+        if not args:
+            return 'Usage: `/disconnect <google|obsidian|canvas|notion>`'
+        service = args[0].lower()
+        if service == 'google':
+            try:
+                p = _google_token_path()
+                if p.exists():
+                    p.unlink()
+                _disable_module('gmail')
+                _disable_module('gcal')
+                return '✅  Google disconnected. Gmail and Calendar disabled.'
+            except Exception as e:
+                return f'Disconnect failed: {e}'
+        if service in ('obsidian', 'canvas', 'notion'):
+            _disable_module(service)
+            return f'✅  {service.title()} disabled. Stored credentials kept (use Settings to clear).'
+        return f'Unknown service: `{service}`.'
+
 
     if cmd == '/review-drafts':
         import dry_run

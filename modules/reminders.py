@@ -137,12 +137,11 @@ class RemindersModule(PebbleModule):
         lines = ['Upcoming reminders:']
         for i, (remind_at, r) in enumerate(upcoming, 1):
             time_label = _format_remind_at(remind_at)
-            wall_clock = remind_at.astimezone().strftime('%-I:%M %p') if hasattr(remind_at, 'strftime') else ''
+            # Windows strftime doesn't support '%-I' (POSIX-only); always use '%I' then strip the leading zero.
             try:
-                # Windows-safe strftime (no %-I)
                 wall_clock = remind_at.astimezone().strftime('%I:%M %p').lstrip('0')
             except Exception:
-                wall_clock = remind_at.isoformat()
+                wall_clock = remind_at.isoformat() if hasattr(remind_at, 'isoformat') else str(remind_at)
             lines.append(f'{i}. {r["text"]} — {time_label} ({wall_clock})')
         return '\n'.join(lines)
 

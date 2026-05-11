@@ -339,13 +339,7 @@ class SettingsWindow:
 
         # Special handling for google_status field type
         if field['type'] == 'google_status':
-            if os.path.exists(_GOOGLE_TOKEN):
-                tk.Label(row, text='✓  Connected', bg=C['card'], fg=C['teal'],
-                         font=('Segoe UI', 9)).pack(side='left')
-            else:
-                tk.Label(row, text='Not connected — will prompt on first use',
-                         bg=C['card'], fg='#f0a050',
-                         font=('Segoe UI', 9)).pack(side='left')
+            self._render_google_status_row(row)
             return
 
         var = tk.StringVar(value=saved_cfg.get(field['key'], ''))
@@ -381,6 +375,91 @@ class SettingsWindow:
         path = filedialog.askdirectory(title='Select folder', parent=self.win)
         if path:
             var.set(path)
+
+    # ── Google status / connect button ─────────────────────────────────────
+
+    def _render_google_status_row(self, row: tk.Frame):
+        """Renders one of:
+            - "Connected as <email>" + Disconnect button   (token exists, valid)
+            - "Connecting…"                                (OAuth in progress)
+            - "Not connected" + Connect button             (default)
+        """
+        # Avoid double-render when called twice within the same _refresh
+        for w in row.winfo_children()[1:]:
+            w.destroy()
+
+        if os.path.exists(_GOOGLE_TOKEN):
+            email = self._google_email() or 'Google account'
+            tk.Label(row, text=f'✓  {email}', bg=C['card'], fg=C['teal'],
+                     font=('Segoe UI', 9)).pack(side='left')
+            tk.Button(
+                row, text='Disconnect',
+                command=self._disconnect_google,
+                bg=C['pill'], fg=C['err'],
+                activebackground=C['border'], activeforeground='white',
+                font=('Segoe UI', 8), relief='flat', bd=0,
+                padx=10, pady=2, cursor='hand2',
+            ).pack(side='right')
+        else:
+            tk.Label(row, text='Not connected', bg=C['card'], fg='#f0a050',
+                     font=('Segoe UI', 9)).pack(side='left')
+            tk.Button(
+                row, text='Connect Google Account',
+                command=self._connect_google,
+                bg=C['accent'], fg='white',
+                activebackground=C['accent2'], activeforeground='white',
+                font=('Segoe UI', 8, 'bold'), relief='flat', bd=0,
+                padx=12, pady=3, cursor='hand2',
+            ).pack(side='right')
+
+    def _google_email(self) -> str:
+        """Best-effort: extract the user's email from the saved token."""
+        try:
+            import json
+            data = json.loads(open(_GOOGLE_TOKEN, 'r', encoding='utf-8').read())
+            # google-auth-oauthlib doesn't always save email; fall back to None
+            return data.get('account', '') or ''
+        except Exception:
+            return ''
+
+    def _connect_google(self):
+        """Start the OAuth flow in a background thread. Browser opens automatically."""
+        import threading
+
+        # Disable any other connect buttons / show status
+        self._refresh()  # show current state
+        # We can't easily mutate "in progress" UI from here without more plumbing;
+        # OAuth typically takes a few seconds — the user will see the browser open.
+
+        def _do_auth():
+            error = None
+            try:
+                from modules.google_auth import GoogleServices
+                GoogleServices()  # creates ~/.pebble/google_token.json on success
+            except Exception as e:
+                error = str(e)
+            # Back on the Tk thread
+            self.win.after(0, lambda: self._on_auth_done(error))
+
+        threading.Thread(target=_do_auth, daemon=True, name='pebble-google-oauth').start()
+
+    def _on_auth_done(self, error: str | None):
+        if error:
+            try:
+                import tkinter.messagebox as mbox
+                mbox.showerror('Google sign-in failed', error[:500], parent=self.win)
+            except Exception:
+                pass
+        # Re-render the entire module list — token file existence drives the UI
+        self._refresh()
+
+    def _disconnect_google(self):
+        try:
+            if os.path.exists(_GOOGLE_TOKEN):
+                os.unlink(_GOOGLE_TOKEN)
+        except OSError:
+            pass
+        self._refresh()
 
     def _refresh(self):
         self._build_module_cards()

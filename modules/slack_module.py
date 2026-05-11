@@ -18,15 +18,20 @@ class SlackModule(PebbleModule):
     description  = 'Read and send Slack messages, search channels'
     icon         = '💬'
     config_fields = [
-        {'key': 'bot_token',       'label': 'Bot Token (xoxb-...)',                'type': 'password'},
-        {'key': 'default_channel', 'label': 'Default channel (e.g. general)',      'type': 'text'},
+        {'key': 'bot_token',          'label': 'Token (xoxb-/xoxp-/xoxe.xoxp-)',     'type': 'password'},
+        {'key': 'default_channel',    'label': 'Default channel (e.g. general)',     'type': 'text'},
+        {'key': 'important_channels', 'label': 'Watched channels (comma-separated, e.g. g-team,announcements)', 'type': 'text'},
     ]
 
     # ── readiness ─────────────────────────────────────────────────────────────
 
     def is_ready(self) -> bool:
         token = self.cfg.get('bot_token', '').strip()
-        return bool(token) and token.startswith('xoxb-')
+        # Accept any valid Slack token format: bot (xoxb-), user (xoxp-), or
+        # the newer rotatable user-OAuth tokens (xoxe.xoxp-…).
+        if not token:
+            return False
+        return any(token.startswith(p) for p in ('xoxb-', 'xoxp-', 'xoxe.xoxp-', 'xoxe-'))
 
     # ── tool identity ─────────────────────────────────────────────────────────
 
@@ -85,8 +90,9 @@ class SlackModule(PebbleModule):
         token = self.cfg.get('bot_token', '').strip()
         if not token:
             return 'Slack not configured — add your Bot Token in Settings.'
-        if not token.startswith('xoxb-'):
-            return 'Slack token looks invalid — it should start with xoxb-'
+        if not any(token.startswith(p) for p in ('xoxb-', 'xoxp-', 'xoxe.xoxp-', 'xoxe-')):
+            return ('Slack token looks invalid — expected one of: '
+                    'xoxb- (bot), xoxp- (user OAuth), xoxe.xoxp- (rotatable user OAuth).')
 
         headers = {
             'Authorization': f'Bearer {token}',
@@ -368,3 +374,187 @@ class SlackModule(PebbleModule):
                 break
 
         return ''
+
+
+# ── Slack watcher thread (background poll) ────────────────────────────────────
+
+import threading
+import time as _time
+from typing import Callable
+
+
+class SlackWatcherThread:
+    """Polls watched Slack channels for new messages.
+
+    Mirrors the GmailWatcherThread pattern. First run silently records the
+    current latest-message timestamp per channel (no notification flood on
+    startup). Subsequent polls call on_notification() for messages newer
+    than what we've already seen.
+
+    on_notification(info) receives:
+        {
+            'channel_id':   str,
+            'channel_name': str,
+            'user_id':      str,
+            'user_name':    str,
+            'text':         str,
+            'permalink':    str,
+            'ts':           str,   # Slack timestamp
+        }
+    """
+
+    POLL_INTERVAL_SECONDS = 60
+    SLACK_API_BASE = 'https://slack.com/api'
+
+    def __init__(self, *, token: str, channels: list[str],
+                 on_notification: Callable[[dict], None],
+                 workspace_label: str = ''):
+        self._token             = (token or '').strip()
+        self._channels_raw      = [c.strip().lstrip('#') for c in (channels or []) if c.strip()]
+        self._on_notification   = on_notification
+        self._workspace_label   = workspace_label or ''
+        self._stop_event        = threading.Event()
+        self._thread:           threading.Thread | None = None
+
+        # Resolved at first poll: {channel_name_lower: channel_id}
+        self._channel_ids:      dict[str, str] = {}
+        # Last-seen timestamp per channel_id (Slack 'ts' string)
+        self._last_seen_ts:     dict[str, str] = {}
+        # Cache of user_id → display name
+        self._user_name_cache:  dict[str, str] = {}
+
+    # ── lifecycle ─────────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        if not self._token or not self._channels_raw:
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True, name='SlackWatcher')
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    # ── poll loop ─────────────────────────────────────────────────────────────
+
+    def _loop(self) -> None:
+        first_run = True
+        # First poll fires immediately; subsequent ones every POLL_INTERVAL_SECONDS
+        while not self._stop_event.wait(timeout=0 if first_run else self.POLL_INTERVAL_SECONDS):
+            try:
+                self._tick(first_run=first_run)
+            except Exception:
+                # Swallow — never crash silently mid-session
+                pass
+            first_run = False
+
+    def _tick(self, *, first_run: bool) -> None:
+        # Resolve channel name → ID once (cache thereafter)
+        if not self._channel_ids:
+            self._resolve_channel_ids()
+            if not self._channel_ids:
+                return
+
+        for channel_name, channel_id in self._channel_ids.items():
+            try:
+                new_msgs = self._fetch_new_messages(channel_id)
+            except Exception:
+                continue
+            if not new_msgs:
+                continue
+            # Update last_seen to the most-recent message
+            self._last_seen_ts[channel_id] = new_msgs[0].get('ts', self._last_seen_ts.get(channel_id, ''))
+            if first_run:
+                continue  # silent backfill on first run
+            # Most-recent-first → notify oldest-first so the popup queue is natural
+            for msg in reversed(new_msgs):
+                if self._should_skip(msg):
+                    continue
+                info = self._build_info(channel_id, channel_name, msg)
+                try:
+                    self._on_notification(info)
+                except Exception:
+                    pass
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _headers(self) -> dict:
+        return {'Authorization': f'Bearer {self._token}'}
+
+    def _resolve_channel_ids(self) -> None:
+        """Map each watched channel name to its ID via conversations.list."""
+        try:
+            r = requests.get(f'{self.SLACK_API_BASE}/conversations.list',
+                              headers=self._headers(),
+                              params={'limit': 1000,
+                                      'types': 'public_channel,private_channel,mpim,im'},
+                              timeout=15)
+            data = r.json() if r.status_code == 200 else {}
+        except Exception:
+            return
+        if not data.get('ok'):
+            return
+        wanted = {c.lower() for c in self._channels_raw}
+        for ch in data.get('channels', []):
+            name = (ch.get('name') or '').lower()
+            if name in wanted and ch.get('id'):
+                self._channel_ids[name] = ch['id']
+
+    def _fetch_new_messages(self, channel_id: str) -> list[dict]:
+        """Pull messages newer than the last-seen ts for this channel."""
+        params = {'channel': channel_id, 'limit': 50}
+        oldest = self._last_seen_ts.get(channel_id)
+        if oldest:
+            params['oldest'] = oldest
+        r = requests.get(f'{self.SLACK_API_BASE}/conversations.history',
+                          headers=self._headers(), params=params, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        if not data.get('ok'):
+            return []
+        msgs = data.get('messages', []) or []
+        # Slack returns most-recent first; drop the boundary message if oldest was inclusive
+        if oldest:
+            msgs = [m for m in msgs if m.get('ts', '') > oldest]
+        return msgs
+
+    def _should_skip(self, msg: dict) -> bool:
+        """Filter out bot messages, channel join/leave noise, and our own messages."""
+        if msg.get('subtype') in ('bot_message', 'channel_join', 'channel_leave',
+                                   'channel_topic', 'channel_purpose'):
+            return True
+        if msg.get('bot_id'):
+            return True
+        return False
+
+    def _resolve_user_name(self, user_id: str) -> str:
+        if not user_id:
+            return 'someone'
+        if user_id in self._user_name_cache:
+            return self._user_name_cache[user_id]
+        try:
+            r = requests.get(f'{self.SLACK_API_BASE}/users.info',
+                              headers=self._headers(),
+                              params={'user': user_id}, timeout=10)
+            data = r.json() if r.status_code == 200 else {}
+        except Exception:
+            return user_id
+        if not data.get('ok'):
+            return user_id
+        profile = data.get('user', {}).get('profile', {}) or {}
+        name = (profile.get('display_name') or profile.get('real_name')
+                or data.get('user', {}).get('name') or user_id)
+        self._user_name_cache[user_id] = name
+        return name
+
+    def _build_info(self, channel_id: str, channel_name: str, msg: dict) -> dict:
+        user_id = msg.get('user', '') or msg.get('bot_id', '')
+        return {
+            'workspace':    self._workspace_label,
+            'channel_id':   channel_id,
+            'channel_name': channel_name,
+            'user_id':      user_id,
+            'user_name':    self._resolve_user_name(user_id),
+            'text':         (msg.get('text') or '')[:500],
+            'ts':           msg.get('ts', ''),
+        }

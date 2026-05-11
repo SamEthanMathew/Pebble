@@ -152,7 +152,10 @@ CHAT_HTML = r"""<!DOCTYPE html>
     transition:all .2s;overflow:hidden;
   }
   .pet-card:hover{transform:translateY(-1px);}
-  .pet-emoji{font-size:22px;flex-shrink:0;}
+  .pet-emoji{font-size:22px;flex-shrink:0;display:grid;place-items:center;width:32px;height:32px;}
+  .pet-emoji img{width:100%;height:100%;object-fit:contain;}
+  .brand-avatar img{width:100%;height:100%;object-fit:contain;border-radius:50%;}
+  .msg-avatar img{width:100%;height:100%;object-fit:contain;}
   .pet-text{line-height:1.25;opacity:0;transition:opacity .18s;min-width:0;}
   .sidebar:hover .pet-text{opacity:1;}
   .pet-title{font-size:12.5px;font-weight:600;}
@@ -430,7 +433,7 @@ CHAT_HTML = r"""<!DOCTYPE html>
   <!-- HEADER -->
   <div class="header">
     <div class="brand">
-      <div class="brand-avatar">🦀</div>
+      <div class="brand-avatar"><img src="{{PEBBLE_LOGO_URI}}" alt="Pebble"/></div>
       <div class="brand-text">
         <div class="brand-name">
           Pebble
@@ -468,33 +471,33 @@ CHAT_HTML = r"""<!DOCTYPE html>
   <div class="main">
     <!-- SIDEBAR -->
     <nav class="sidebar">
-      <div class="nav-item active">
+      <div class="nav-item active" data-cmd="" title="Chat (default)">
         <i data-lucide="message-circle"></i>
         <span class="nav-label">Chat</span>
       </div>
-      <div class="nav-item" title="Coming soon">
+      <div class="nav-item" data-cmd="/tasks" title="Show open tasks">
         <i data-lucide="check-square"></i>
         <span class="nav-label">Tasks</span>
       </div>
-      <div class="nav-item" title="Obsidian notes">
+      <div class="nav-item" data-cmd="/notes" title="Obsidian vault root">
         <i data-lucide="file-text"></i>
         <span class="nav-label">Notes</span>
       </div>
-      <div class="nav-item" title="Coming soon">
+      <div class="nav-item" data-cmd="/gmail" title="Recent unread mail">
         <i data-lucide="mail"></i>
         <span class="nav-label">Gmail</span>
       </div>
-      <div class="nav-item" title="Coming soon">
+      <div class="nav-item" data-cmd="/calendar" title="Today's events">
         <i data-lucide="calendar"></i>
         <span class="nav-label">Calendar</span>
       </div>
-      <div class="nav-item" title="Coming soon">
+      <div class="nav-item" data-cmd="/reminders" title="Pending reminders">
         <i data-lucide="bell"></i>
         <span class="nav-label">Reminders</span>
       </div>
       <div class="sidebar-spacer"></div>
       <div class="pet-card">
-        <span class="pet-emoji">🦀</span>
+        <span class="pet-emoji"><img src="{{PEBBLE_LOGO_URI}}" alt="Pebble"/></span>
         <div class="pet-text">
           <div class="pet-title">Pebble</div>
           <div class="pet-sub">Always here</div>
@@ -644,7 +647,7 @@ function appendBot(text) {
   const row = document.createElement('div');
   row.className = 'msg-row';
   row.innerHTML = `
-    <div class="msg-avatar">🦀</div>
+    <div class="msg-avatar"><img src="{{PEBBLE_LOGO_URI}}" alt="Pebble"/></div>
     <div class="msg-stack">
       <div class="bubble crab">${renderMd(text)}</div>
       <div class="timestamp">${now12()}</div>
@@ -671,7 +674,7 @@ function appendError(msg) {
   const row = document.createElement('div');
   row.className = 'msg-row';
   row.innerHTML = `
-    <div class="msg-avatar">🦀</div>
+    <div class="msg-avatar"><img src="{{PEBBLE_LOGO_URI}}" alt="Pebble"/></div>
     <div class="msg-stack">
       <div class="bubble error-bubble">${escapeHtml(msg)}</div>
       <div class="timestamp">${now12()}</div>
@@ -686,7 +689,7 @@ function _showThinkingBubble() {
   thinkingEl.className = 'msg-row';
   thinkingEl.id = 'thinkingRow';
   thinkingEl.innerHTML = `
-    <div class="msg-avatar">🦀</div>
+    <div class="msg-avatar"><img src="{{PEBBLE_LOGO_URI}}" alt="Pebble"/></div>
     <div class="msg-stack">
       <div class="bubble crab thinking">Thinking<span class="dots"></span></div>
     </div>`;
@@ -861,6 +864,20 @@ document.querySelectorAll('.ctx-chip[data-msg]').forEach(btn => {
   });
 });
 
+// ── Sidebar tabs: each fires its data-cmd as if user typed it ────────────────
+document.querySelectorAll('.nav-item[data-cmd]').forEach(item => {
+  item.addEventListener('click', () => {
+    if (isBusy) return;
+    const cmd = item.dataset.cmd;
+    // Toggle active highlight
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    item.classList.add('active');
+    if (!cmd) return;  // Chat tab — no-op
+    composerInput.value = cmd;
+    doSend();
+  });
+});
+
 // ── Model badge toggle ─────────────────────────────────────────────────────────
 modelBadge.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -994,6 +1011,16 @@ class ChatAPI:
             self._msgs.append({'role': 'assistant', 'content': response})
             self._window.evaluate_js(f'receiveMessage({json.dumps(response)})')
         except Exception as exc:
+            # Log to ~/.pebble/errors/<date>.jsonl so we can diagnose later
+            try:
+                import sys as _sys
+                import error_reporter
+                error_reporter.report(type(exc), exc, exc.__traceback__,
+                                       source='chat_server',
+                                       context={'model_id': locals().get('backend') and backend.entry.get('id'),
+                                                'last_user_msg': (self._msgs[-1] if self._msgs else {}).get('content', '')[:200]})
+            except Exception:
+                pass
             self._window.evaluate_js(f'receiveError({json.dumps(str(exc))})')
 
     def start_voice_input(self):
@@ -1071,6 +1098,25 @@ class ChatAPI:
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+def _logo_data_uri() -> str:
+    """Build a data: URI for the Pebble crab logo so the webview can render it
+    without needing file:// access. Falls back to the 🦀 emoji on any failure."""
+    import base64
+    from pathlib import Path
+    candidates = [
+        Path(__file__).parent / 'pebble_logo_pack' / 'pebble-crab-icon-128x128-transparent.png',
+        Path(__file__).parent / 'pebble_logo_pack' / 'pebble-crab-icon-64x64-transparent.png',
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                b64 = base64.b64encode(p.read_bytes()).decode()
+                return f'data:image/png;base64,{b64}'
+        except Exception:
+            continue
+    return ''  # JS will show broken image; emoji fallback would require diff path
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -1078,10 +1124,12 @@ if __name__ == '__main__':
     parser.add_argument('--y', type=int, default=None)
     args = parser.parse_args()
 
+    html = CHAT_HTML.replace('{{PEBBLE_LOGO_URI}}', _logo_data_uri())
+
     api    = ChatAPI()
     window = webview.create_window(
         'Pebble',
-        html=CHAT_HTML,
+        html=html,
         js_api=api,
         width=1100,
         height=740,

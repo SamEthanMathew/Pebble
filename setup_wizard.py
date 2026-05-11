@@ -28,6 +28,15 @@ try:
 except ImportError:
     _PSUTIL = False
 
+try:
+    from PIL import Image, ImageTk
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
+
+import os as _os
+_LOGO_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'pebble_logo_pack')
+
 C = {
     'bg':      '#0d0d1a',
     'panel':   '#141427',
@@ -226,10 +235,20 @@ class SetupWizard:
         inner = tk.Frame(p, bg=C['bg'])
         inner.place(relx=0.5, rely=0.44, anchor='center')
 
-        tile = tk.Frame(inner, bg=C['accent'], width=76, height=76)
+        tile = tk.Frame(inner, bg=C['accent'], width=96, height=96)
         tile.pack_propagate(False)
         tile.pack(pady=(0, 18))
-        tk.Label(tile, text='🦀', bg=C['accent'], font=('Segoe UI', 40)).pack(expand=True)
+        logo_path = _os.path.join(_LOGO_DIR, 'pebble-crab-icon-128x128-transparent.png')
+        if _HAS_PIL and _os.path.exists(logo_path):
+            try:
+                img = Image.open(logo_path).convert('RGBA').resize((76, 76),
+                                                                    Image.Resampling.LANCZOS)
+                self._welcome_logo = ImageTk.PhotoImage(img)
+                tk.Label(tile, image=self._welcome_logo, bg=C['accent'], bd=0).pack(expand=True)
+            except Exception:
+                tk.Label(tile, text='🦀', bg=C['accent'], font=('Segoe UI', 40)).pack(expand=True)
+        else:
+            tk.Label(tile, text='🦀', bg=C['accent'], font=('Segoe UI', 40)).pack(expand=True)
 
         tk.Label(inner, text='Pebble', bg=C['bg'], fg=C['text'],
                  font=('Segoe UI', 30, 'bold')).pack()

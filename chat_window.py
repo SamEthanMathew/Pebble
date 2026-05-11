@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import threading
 import tkinter as tk
 from typing import Optional
 
 import crab_config
+
+try:
+    from PIL import Image, ImageTk
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
+
+_LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'pebble_logo_pack', 'pebble-crab-icon-64x64-transparent.png',
+)
 
 C = {
     'bg':      '#0d0d1a',
@@ -90,8 +102,24 @@ class ChatWindow:
         title.pack(fill='x')
         title.pack_propagate(False)
 
-        tk.Label(title, text='🦀  Pebble', bg=C['accent'], fg='white',
-                 font=('Segoe UI', 11, 'bold')).pack(side='left', padx=14)
+        # Pebble logo + wordmark in the title bar
+        brand = tk.Frame(title, bg=C['accent'])
+        brand.pack(side='left', padx=(10, 0))
+        if _HAS_PIL and os.path.exists(_LOGO_PATH):
+            try:
+                img = Image.open(_LOGO_PATH).convert('RGBA').resize((28, 28),
+                                                                     Image.Resampling.LANCZOS)
+                self._logo_img = ImageTk.PhotoImage(img)
+                tk.Label(brand, image=self._logo_img, bg=C['accent'],
+                         bd=0).pack(side='left', padx=(0, 6), pady=6)
+            except Exception:
+                tk.Label(brand, text='🦀', bg=C['accent'], fg='white',
+                         font=('Segoe UI', 14)).pack(side='left', padx=(0, 6))
+        else:
+            tk.Label(brand, text='🦀', bg=C['accent'], fg='white',
+                     font=('Segoe UI', 14)).pack(side='left', padx=(0, 6))
+        tk.Label(brand, text='Pebble', bg=C['accent'], fg='white',
+                 font=('Segoe UI', 11, 'bold')).pack(side='left')
 
         # dry-run banner (hidden when dry_run=false)
         self._dry_banner = tk.Frame(self.win, bg='#d39a2c', height=22)
@@ -327,6 +355,14 @@ class ChatWindow:
             self._msgs.append({'role': 'assistant', 'content': response})
             self.win.after(0, lambda r=response: self._show_response(r))
         except Exception as exc:
+            try:
+                import error_reporter
+                error_reporter.report(type(exc), exc, exc.__traceback__,
+                                       source='chat_window',
+                                       context={'model_id': self._active_id,
+                                                'last_user_msg': (self._msgs[-1] if self._msgs else {}).get('content', '')[:200]})
+            except Exception:
+                pass
             self.win.after(0, lambda e=exc: self._show_error(str(e)))
 
     def _show_response(self, text: str):

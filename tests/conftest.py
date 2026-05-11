@@ -35,9 +35,11 @@ def pebble_home(tmp_path, monkeypatch):
                      'planners.school', 'planners.dispatcher', 'planners.morning',
                      'first_time_ledger', 'autonomy', 'approval_queue',
                      'cache', 'scraper', 'planners.exam_prep',
-                     'modules.memory', 'audit_reader', 'idle_detect',
-                     'planners.wrapup', 'feedback', 'entity_suggest',
-                     'error_reporter', 'setup_wizard', 'chat_commands'):
+                     'modules.memory', 'modules.reminders',
+                     'modules.slack_module', 'audit_reader',
+                     'idle_detect', 'planners.wrapup', 'feedback',
+                     'entity_suggest', 'error_reporter', 'setup_wizard',
+                     'chat_commands'):
         if mod_name in sys.modules:
             import importlib
             importlib.reload(sys.modules[mod_name])
@@ -69,7 +71,12 @@ def mock_backend(monkeypatch):
 
     try:
         import model_backend
-        monkeypatch.setattr(model_backend.ModelBackend, 'chat', lambda self, messages, system='': mock.chat(messages, system))
+        # Accept extra kwargs (max_tokens, etc.) so the patch stays compatible
+        # with whatever signature ModelBackend.chat evolves to.
+        monkeypatch.setattr(
+            model_backend.ModelBackend, 'chat',
+            lambda self, messages, system='', **_kw: mock.chat(messages, system),
+        )
     except ImportError:
         pass
 

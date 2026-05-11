@@ -33,6 +33,12 @@ except ImportError:
     _HAS_GMAIL_WATCHER = False
 
 try:
+    from modules.slack_module import SlackWatcherThread
+    _HAS_SLACK_WATCHER = True
+except ImportError:
+    _HAS_SLACK_WATCHER = False
+
+try:
     from proactive_engine import ProactiveEngine
     _HAS_PROACTIVE = True
 except ImportError:
@@ -170,6 +176,7 @@ class CrabPet:
         self._chat_proc:  subprocess.Popen | None = None
         self._settings:   SettingsWindow   | None = None
         self._gmail_watcher: 'GmailWatcherThread | None' = None
+        self._slack_watchers: list = []   # one SlackWatcherThread per workspace
         self._proactive: 'ProactiveEngine | None' = None
         self._hotkey_listener = None
 
@@ -178,7 +185,17 @@ class CrabPet:
         self.canvas.bind('<ButtonRelease-1>', self._mouse_up)
         self.canvas.bind('<Button-3>',        self._show_menu)
 
+        # Un-withdraw first (if the wizard hid the root before handing it off),
+        # THEN apply our geometry — Tk silently drops geometry calls on a
+        # withdrawn window.
+        try:
+            self.root.deiconify()
+        except Exception:
+            pass
+        self.root.update_idletasks()
         self._place()
+        self.root.update_idletasks()
+        self.root.lift()
         self._tick()
         self.root.after(2000, self._start_notification_services)
         self._start_hotkey()
@@ -236,11 +253,18 @@ class CrabPet:
         self._settings.show()
 
     def _start_notification_services(self):
-        """Start Gmail watcher and proactive engine if configured and available."""
+        """Start Gmail/Slack watchers and proactive engine if configured."""
+        # Cache active modules once; multiple watchers read from this list
+        active = []
+        try:
+            from modules import get_active_modules
+            active = get_active_modules()
+        except Exception:
+            pass
+
+        # ── Gmail watcher ─────────────────────────────────────────────────────
         if _HAS_GMAIL_WATCHER:
             try:
-                from modules import get_active_modules
-                active = get_active_modules()
                 gmail_mod = next((m for m in active if m.name == 'gmail'), None)
                 if gmail_mod is not None:
                     cfg = gmail_mod.cfg
@@ -252,6 +276,48 @@ class CrabPet:
                             on_notification=self._on_gmail_notification,
                         )
                         self._gmail_watcher.start()
+            except Exception:
+                pass
+
+        # ── Slack watchers (one per workspace) ────────────────────────────────
+        if _HAS_SLACK_WATCHER:
+            try:
+                slack_mod = next((m for m in active if m.name == 'slack'), None)
+                if slack_mod is not None:
+                    cfg = slack_mod.cfg
+                    workspaces = cfg.get('workspaces', {}) or {}
+
+                    if workspaces:
+                        # Multi-workspace path
+                        for ws_name, ws_cfg in workspaces.items():
+                            token = (ws_cfg.get('access_token') or '').strip()
+                            channels_raw = ws_cfg.get('important_channels', '')
+                            channels = [c.strip().lstrip('#')
+                                        for c in channels_raw.split(',') if c.strip()]
+                            if not (token and channels):
+                                continue
+                            w = SlackWatcherThread(
+                                token=token,
+                                channels=channels,
+                                on_notification=self._on_slack_notification,
+                                workspace_label=ws_name,
+                            )
+                            w.start()
+                            self._slack_watchers.append(w)
+                    else:
+                        # Backward compat: single-workspace
+                        token = cfg.get('bot_token', '').strip()
+                        channels_raw = cfg.get('important_channels', '')
+                        channels = [c.strip().lstrip('#')
+                                    for c in channels_raw.split(',') if c.strip()]
+                        if token and channels:
+                            w = SlackWatcherThread(
+                                token=token,
+                                channels=channels,
+                                on_notification=self._on_slack_notification,
+                            )
+                            w.start()
+                            self._slack_watchers.append(w)
             except Exception:
                 pass
 
@@ -288,6 +354,30 @@ class CrabPet:
             self._hotkey_listener.start()
         except Exception:
             pass
+
+    def _on_slack_notification(self, info: dict):
+        """Slack-watcher callback; runs in worker thread → schedule on Tk thread."""
+        def _show():
+            ws    = info.get('workspace', '')
+            ch    = info.get('channel_name', '?')
+            who   = info.get('user_name', 'someone')
+            text  = (info.get('text') or '')[:80]
+            if not text:
+                text = '(message has no text — maybe attachment/file)'
+
+            title = f'💬  {ws}  ·  #{ch}  ·  {who}' if ws else f'💬  #{ch}  ·  {who}'
+            popup = NotificationPopup(
+                self.root,
+                title=title,
+                body=text,
+                buttons=[
+                    {'label': 'Open Pebble', 'command': self._on_click, 'style': 'primary'},
+                    {'label': 'Ignore',      'command': lambda: None,    'style': 'default'},
+                ],
+                auto_dismiss_ms=15000,
+            )
+            popup.show()
+        self.root.after(0, _show)
 
     def _on_gmail_notification(self, info: dict):
         """Called from background thread — must schedule on tkinter thread."""
@@ -329,6 +419,9 @@ class CrabPet:
         def _quit():
             if self._gmail_watcher:
                 self._gmail_watcher.stop()
+            for w in self._slack_watchers:
+                try: w.stop()
+                except Exception: pass
             if self._proactive:
                 self._proactive.stop()
             if self._hotkey_listener:

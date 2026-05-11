@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import re
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict, field
@@ -53,6 +54,73 @@ def input_hash(inputs: dict[str, Any]) -> str:
     """Stable sha256 hex of canonicalized JSON."""
     canon = json.dumps(inputs, sort_keys=True, default=str, ensure_ascii=False).encode('utf-8')
     return 'sha256:' + hashlib.sha256(canon).hexdigest()[:32]
+
+
+def extract_json_object(text: str) -> dict[str, Any]:
+    """Extract a JSON object from an LLM response, robust to common quirks.
+
+    Handles:
+    - ```json ... ``` and ``` ... ``` markdown fences
+    - Prose before AND/OR after the JSON
+    - Trailing text after the closing fence (LLM adds "Note: ..." etc.)
+    - Whole-text JSON (no fence at all)
+
+    Raises json.JSONDecodeError if no parseable JSON object is found.
+    """
+    text = (text or '').strip()
+    if not text:
+        raise json.JSONDecodeError('Empty response', '', 0)
+
+    # 1. Try to find any ```...``` fenced block (json or otherwise) and parse it
+    for m in re.finditer(r'```(?:json|JSON)?\s*\n?(.+?)\n?```', text, re.DOTALL):
+        candidate = m.group(1).strip()
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            continue  # try the next fence
+
+    # 2. Try the whole text as JSON
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Find the first balanced {...} object by brace-matching (string-aware)
+    start = text.find('{')
+    if start == -1:
+        raise json.JSONDecodeError(
+            'No JSON object found in response', text, 0)
+
+    depth   = 0
+    in_str  = False
+    escape  = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == '\\':
+            escape = True
+            continue
+        if c == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+
+    raise json.JSONDecodeError(
+        'Unbalanced braces — no complete JSON object in response',
+        text, start)
 
 
 def read_state_doc(name: str) -> dict[str, Any] | None:
@@ -183,12 +251,13 @@ class BasePlanner(ABC):
             metrics.emit('planner.skipped', {'planner': self.name, 'gate_reason': 'no_planner_model'})
             return None
 
-        # Call LLM
+        # Call LLM with generous output budget — state docs can be large JSON
         system_prompt, user_msg = self.render_prompt(inputs)
         try:
             text = backend.chat(
                 [{'role': 'user', 'content': user_msg or 'Generate the state doc.'}],
                 system=system_prompt,
+                max_tokens=8192,
             )
         except Exception as e:
             audit.append({

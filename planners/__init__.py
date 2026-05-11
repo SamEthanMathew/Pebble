@@ -14,6 +14,7 @@ from .base import (
     write_state_doc,
     is_fresh,
     input_hash,
+    extract_json_object,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     'write_state_doc',
     'is_fresh',
     'input_hash',
+    'extract_json_object',
 ]

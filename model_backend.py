@@ -46,20 +46,24 @@ class ModelBackend:
 
     # ── chat ───────────────────────────────────────────────────────────────────
 
-    def chat(self, messages: list[dict], system: str = '') -> str:
+    def chat(self, messages: list[dict], system: str = '', *,
+             max_tokens: int = 4096) -> str:
+        """Send a chat completion. max_tokens caps OUTPUT length only.
+        Planner-style large-JSON callers should pass 8192 or higher.
+        """
         if self.type == 'ollama':
-            return self._ollama(messages, system)
+            return self._ollama(messages, system, max_tokens=max_tokens)
         if self.type == 'anthropic':
-            return self._anthropic(messages, system)
+            return self._anthropic(messages, system, max_tokens=max_tokens)
         if self.type == 'openai':
-            return self._openai(messages, system)
+            return self._openai(messages, system, max_tokens=max_tokens)
         if self.type == 'gemini':
-            return self._gemini(messages, system)
+            return self._gemini(messages, system, max_tokens=max_tokens)
         raise ValueError(f'Unknown backend type: {self.type!r}')
 
     # ── providers ──────────────────────────────────────────────────────────────
 
-    def _ollama(self, messages, system):
+    def _ollama(self, messages, system, *, max_tokens: int = 4096):
         if not ollama_running():
             raise RuntimeError('Ollama is not running. Start it with: ollama serve')
         installed = local_models()
@@ -72,30 +76,36 @@ class ModelBackend:
         msgs = ([{'role': 'system', 'content': system}] if system else []) + messages
         r = requests.post(
             f'{OLLAMA_BASE}/api/chat',
-            json={'model': self.model, 'messages': msgs, 'stream': False},
+            json={'model': self.model, 'messages': msgs, 'stream': False,
+                  'options': {'num_predict': max_tokens}},
             timeout=TIMEOUT,
         )
         r.raise_for_status()
         return r.json()['message']['content']
 
-    def _anthropic(self, messages, system):
+    def _anthropic(self, messages, system, *, max_tokens: int = 4096):
         import anthropic
-        kwargs: dict = dict(model=self.model, max_tokens=1024, messages=messages)
+        kwargs: dict = dict(model=self.model, max_tokens=max_tokens, messages=messages)
         if system:
             kwargs['system'] = system
         c = anthropic.Anthropic(api_key=self.api_key)
         return c.messages.create(**kwargs).content[0].text
 
-    def _openai(self, messages, system):
+    def _openai(self, messages, system, *, max_tokens: int = 4096):
         import openai
         msgs = ([{'role': 'system', 'content': system}] if system else []) + messages
         c = openai.OpenAI(api_key=self.api_key)
-        return c.chat.completions.create(model=self.model, messages=msgs).choices[0].message.content
+        return c.chat.completions.create(
+            model=self.model, messages=msgs, max_tokens=max_tokens,
+        ).choices[0].message.content
 
-    def _gemini(self, messages, system):
+    def _gemini(self, messages, system, *, max_tokens: int = 4096):
         import google.generativeai as genai
         genai.configure(api_key=self.api_key)
-        m       = genai.GenerativeModel(self.model, system_instruction=system or None)
+        m       = genai.GenerativeModel(
+            self.model, system_instruction=system or None,
+            generation_config={'max_output_tokens': max_tokens},
+        )
         history = [
             {'role': 'user' if msg['role'] == 'user' else 'model',
              'parts': [msg['content']]}

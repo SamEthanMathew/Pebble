@@ -1,11 +1,49 @@
-"""Obsidian module — search, read, write, and manage notes in a local vault."""
+"""Obsidian module — LLM-facing tool surface.
+
+The actual vault operations live in `storage.vault.Vault`. This module is a
+thin adapter that preserves the existing tool API (search/read/write/
+append_daily/list_folder) and returns the same Markdown-shaped strings the
+LLM has been getting.
+
+Phase A: search/read/list_folder delegate to Vault.
+Phase B will route write + append_daily through Vault's write chokepoint so
+they pick up provenance stamping automatically.
+"""
 
 from __future__ import annotations
+
 import re
+import threading
 from datetime import date
 from pathlib import Path
 
 from .base import PebbleModule
+
+
+# One Vault instance per vault path, shared across module re-instantiations
+_VAULT_CACHE: dict[str, object] = {}
+_VAULT_LOCK = threading.Lock()
+
+
+def _vault_for(path: str):
+    """Return a cached Vault for `path`, creating one if needed.
+    Returns None if the path isn't a directory (so callers can short-circuit
+    with the legacy "vault not found" string).
+    """
+    if not path:
+        return None
+    key = str(Path(path).resolve())
+    with _VAULT_LOCK:
+        existing = _VAULT_CACHE.get(key)
+        if existing is not None:
+            return existing
+        try:
+            from storage import Vault
+            v = Vault(key, autostart_watcher=True)
+        except Exception:
+            return None
+        _VAULT_CACHE[key] = v
+        return v
 
 
 class ObsidianModule(PebbleModule):
@@ -19,10 +57,10 @@ class ObsidianModule(PebbleModule):
 
     def __init__(self, cfg: dict):
         super().__init__(cfg)
-        self._vault = Path(cfg.get('vault_path', ''))
+        self._vault_path = Path(cfg.get('vault_path', ''))
 
     def is_ready(self) -> bool:
-        return self._vault.is_dir()
+        return self._vault_path.is_dir()
 
     def tool_name(self) -> str:
         return 'obsidian'
@@ -33,7 +71,7 @@ class ObsidianModule(PebbleModule):
             'search (keyword search across all notes), '
             'read (read a specific note by path or fuzzy name match), '
             'write (create or overwrite a note), '
-            'append_daily (append content to today\'s daily note, creating it if needed), '
+            "append_daily (append content to today's daily note, creating it if needed), "
             'list_folder (list all notes in a given folder within the vault).'
         )
 
@@ -76,66 +114,67 @@ class ObsidianModule(PebbleModule):
 
         if action == 'search':
             return self._action_search(query)
-        elif action == 'read':
+        if action == 'read':
             return self._action_read(path)
-        elif action == 'write':
+        if action == 'write':
             return self._action_write(path, content, title)
-        elif action == 'append_daily':
+        if action == 'append_daily':
             return self._action_append_daily(content)
-        elif action == 'list_folder':
+        if action == 'list_folder':
             return self._action_list_folder(path)
-        else:
-            return f'Unknown action "{action}". Valid actions: search, read, write, append_daily, list_folder.'
+        return f'Unknown action "{action}". Valid actions: search, read, write, append_daily, list_folder.'
 
-    # ── actions ────────────────────────────────────────────────────────────────
+    # ── actions (delegate to Vault when possible) ─────────────────────────────
 
     def _action_search(self, query: str) -> str:
         if not query.strip():
             return 'No query provided for search.'
-        results = self._search(query.strip())
-        if not results:
+        vault = _vault_for(str(self._vault_path))
+        if vault is None:
+            return f'No notes found matching "{query}".'
+        hits = vault.search(query.strip(), k=4)
+        if not hits:
             return f'No notes found matching "{query}".'
         parts = []
-        for note_path, excerpt in results[:4]:
-            title = Path(note_path).stem
-            parts.append(f'**{title}**\n{excerpt}')
+        for h in hits:
+            title = h.note.title
+            parts.append(f'**{title}**\n{h.excerpt}')
         return '\n\n---\n\n'.join(parts)
 
     def _action_read(self, path: str) -> str:
         if not path.strip():
             return 'No path provided for read.'
-        # If it looks like a .md path, try direct read first
-        if path.endswith('.md'):
-            target = self._vault / path
-            if target.exists():
-                try:
-                    return target.read_text(encoding='utf-8', errors='ignore')
-                except Exception as e:
-                    return f'Error reading note: {e}'
-        # Fuzzy match: find a .md file whose stem contains path (case-insensitive)
-        needle = path.lower().replace('.md', '')
+        vault = _vault_for(str(self._vault_path))
+        if vault is None:
+            return f'No note found matching "{path}".'
+
+        # Try id / path lookup first
+        from storage import NoteNotFound
         try:
-            for md in self._vault.rglob('*.md'):
-                if needle in md.stem.lower():
-                    try:
-                        return md.read_text(encoding='utf-8', errors='ignore')
-                    except Exception as e:
-                        return f'Error reading note: {e}'
-        except Exception as e:
-            return f'Error scanning vault: {e}'
+            note = vault.read(path)
+            return note.path.read_text(encoding='utf-8', errors='ignore')
+        except NoteNotFound:
+            pass
+
+        # Fuzzy match by stem: find any note whose basename contains the query
+        needle = path.lower().removesuffix('.md').strip()
+        for n in vault.list():
+            if needle in n.id.rsplit('/', 1)[-1].lower():
+                return n.path.read_text(encoding='utf-8', errors='ignore')
         return f'No note found matching "{path}".'
 
     def _action_write(self, path: str, content: str, title: str) -> str:
         if not content.strip():
             return 'No content provided for write.'
-        # Determine target path
+        # Determine target path (write path stays direct in Phase A; Phase B
+        # will route through Vault.create_note for provenance stamping)
         if path.strip():
-            target = self._vault / path
+            target = self._vault_path / path
             if not path.endswith('.md'):
                 target = target.with_suffix('.md')
         elif title.strip():
             safe_title = re.sub(r'[<>:"/\\|?*]', '-', title.strip())
-            target = self._vault / 'Pebble' / f'{safe_title}.md'
+            target = self._vault_path / 'Pebble' / f'{safe_title}.md'
         else:
             return 'Provide a path or title for the note to write.'
         try:
@@ -148,8 +187,8 @@ class ObsidianModule(PebbleModule):
     def _action_append_daily(self, content: str) -> str:
         if not content.strip():
             return 'No content provided to append.'
-        today = date.today().isoformat()  # YYYY-MM-DD
-        daily_path = self._vault / 'Daily' / f'{today}.md'
+        today = date.today().isoformat()
+        daily_path = self._vault_path / 'Daily' / f'{today}.md'
         try:
             daily_path.parent.mkdir(parents=True, exist_ok=True)
             if daily_path.exists():
@@ -163,7 +202,7 @@ class ObsidianModule(PebbleModule):
             return f'Error updating daily note: {e}'
 
     def _action_list_folder(self, path: str) -> str:
-        folder = self._vault / path if path.strip() else self._vault
+        folder = self._vault_path / path if path.strip() else self._vault_path
         if not folder.is_dir():
             return f'Folder not found: "{path}".'
         try:
@@ -174,37 +213,3 @@ class ObsidianModule(PebbleModule):
             return '\n'.join(lines)
         except Exception as e:
             return f'Error listing folder: {e}'
-
-    # ── internal helpers ───────────────────────────────────────────────────────
-
-    def _search(self, query: str) -> list[tuple[str, str]]:
-        terms = query.lower().split()
-        hits  = []
-        try:
-            for md in self._vault.rglob('*.md'):
-                try:
-                    text  = md.read_text(encoding='utf-8', errors='ignore')
-                    lower = text.lower()
-                    score = sum(lower.count(t) for t in terms)
-                    if score:
-                        hits.append((str(md), self._excerpt(text, terms), score))
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        hits.sort(key=lambda x: x[2], reverse=True)
-        return [(h[0], h[1]) for h in hits]
-
-    def _excerpt(self, text: str, terms: list[str], window: int = 420) -> str:
-        lower = text.lower()
-        best_pos, best_score = 0, 0
-        for i in range(0, len(text), 60):
-            chunk = lower[i:i + window]
-            score = sum(chunk.count(t) for t in terms)
-            if score > best_score:
-                best_score, best_pos = score, i
-        snippet = text[best_pos:best_pos + window].strip()
-        snippet = re.sub(r'!\[.*?\]\(.*?\)', '', snippet)
-        snippet = re.sub(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]', r'\1', snippet)
-        snippet = re.sub(r'```.*?```', '[code block]', snippet, flags=re.S)
-        return snippet.strip()

@@ -148,7 +148,8 @@ def generate_for_course(course_entity, exam_date: str) -> dict[str, Any] | None:
         return None
 
     try:
-        plan = json.loads(_strip_code_fence(text))
+        from planners.base import extract_json_object
+        plan = extract_json_object(text)
     except Exception as e:
         audit.append({
             'module': 'exam_prep', 'action': 'parse_failed',
