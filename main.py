@@ -178,6 +178,8 @@ class CrabPet:
         self._gmail_watcher: 'GmailWatcherThread | None' = None
         self._slack_watchers: list = []   # one SlackWatcherThread per workspace
         self._proactive: 'ProactiveEngine | None' = None
+        self._thinking_scheduler = None
+        self._vault_for_callbacks = None
         self._hotkey_listener = None
 
         self.canvas.bind('<Button-1>',        self._mouse_down)
@@ -331,6 +333,28 @@ class CrabPet:
             except Exception:
                 pass
 
+        # ── Thinking-pass scheduler + reactive challenge (Phase E) ──────────
+        try:
+            import crab_config
+            tp_cfg = crab_config.get('thinking_passes', {}) or {}
+            if any((tp_cfg.get(k, {}) or {}).get('enabled')
+                   for k in ('close', 'connect', 'drift', 'ideas', 'emerge')):
+                from storage import ThinkingScheduler
+                self._thinking_scheduler = ThinkingScheduler()
+                self._thinking_scheduler.start()
+
+            if (tp_cfg.get('challenge_on_edit', {}) or {}).get('enabled'):
+                # Need a long-lived Vault to register the watchdog callback on.
+                from storage import Vault, ChallengeOnDecisionEdit
+                vault_path = (crab_config.get_module_config('obsidian') or {}).get('vault_path')
+                if vault_path:
+                    self._vault_for_callbacks = Vault(vault_path, autostart_watcher=True)
+                    self._vault_for_callbacks.register_user_edit_callback(
+                        ChallengeOnDecisionEdit(cooldown_seconds=300)
+                    )
+        except Exception:
+            pass
+
     def _start_hotkey(self):
         """Register Alt+Space global hotkey to open Pebble from anywhere."""
         if not _HAS_PYNPUT:
@@ -424,6 +448,12 @@ class CrabPet:
                 except Exception: pass
             if self._proactive:
                 self._proactive.stop()
+            if self._thinking_scheduler:
+                try: self._thinking_scheduler.stop()
+                except Exception: pass
+            if self._vault_for_callbacks:
+                try: self._vault_for_callbacks.stop()
+                except Exception: pass
             if self._hotkey_listener:
                 try:
                     self._hotkey_listener.stop()

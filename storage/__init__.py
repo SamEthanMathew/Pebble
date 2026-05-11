@@ -48,6 +48,16 @@ from .context_loader import (
     load_context,
     render_bundle_markdown,
 )
+from .thinking_pass import (
+    PASS_REGISTRY,
+    ChallengeOnDecisionEdit,
+    PassResult,
+    PassSpec,
+    extract_decision_text,
+    is_decision_note,
+    run_pass,
+)
+from .thinking_schedule import ThinkingScheduler, should_fire as schedule_should_fire
 
 __all__ = [
     # Note layer
@@ -67,4 +77,9 @@ __all__ = [
     'EntityResolver', 'Resolution',
     # Context loader
     'ContextBundle', 'EntityRef', 'load_context', 'render_bundle_markdown',
+    # Thinking passes
+    'PASS_REGISTRY', 'PassSpec', 'PassResult', 'run_pass',
+    'extract_decision_text', 'is_decision_note', 'ChallengeOnDecisionEdit',
+    # Scheduler
+    'ThinkingScheduler', 'schedule_should_fire',
 ]

@@ -89,9 +89,18 @@ class Vault:
         # mark_edited_by_user on the watchdog event that fires from our own writes.
         self._recent_writes: dict[Path, float] = {}
         self._self_write_suppress_seconds = 5.0
+        # Callbacks invoked when watchdog detects a user-authored note changed.
+        # Each callback receives the parsed Note; exceptions in callbacks are swallowed.
+        self._user_edit_callbacks: list = []
         if autostart_watcher:
             self._ensure_loaded()
             self._start_watcher()
+
+    def register_user_edit_callback(self, fn) -> None:
+        """Register a callable invoked when a user-authored note changes on disk.
+        Signature: fn(note: Note) -> None. Called on a background thread.
+        """
+        self._user_edit_callbacks.append(fn)
 
     # ── Cache priming ────────────────────────────────────────────────────────
 
@@ -187,6 +196,17 @@ class Vault:
                             outer.mark_edited_by_user(p)
                         except Exception:
                             pass
+
+                # Fire user-edit callbacks for user-authored OR newly-mixed notes
+                # (skip self-writes; skip pure Pebble notes).
+                if not is_self_write:
+                    fresh = outer._by_path.get(p)
+                    if fresh is not None and fresh.source in ('user', 'mixed'):
+                        for cb in list(outer._user_edit_callbacks):
+                            try:
+                                cb(fresh)
+                            except Exception:
+                                pass
 
         observer = Observer()
         observer.schedule(_Handler(), str(self.root), recursive=True)

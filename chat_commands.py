@@ -69,6 +69,15 @@ HELP_TEXT = """**Commands**
 - `/trace <topic>` — chronological mentions across daily notes
 - `/migrate-memory [--apply]` — move ~/.pebble/memory.json into the vault
 
+**Thinking passes** (cloud-only; runs the planner_model)
+- `/close` — evening reflection prompts appended to today's daily note
+- `/connect` — weekly cross-domain digest (user_only)
+- `/emerge` — monthly implied-pattern digest (user_only)
+- `/drift` — goals-vs-behavior diff (mixed_ok)
+- `/ideas` — buildable things from recent writing (user_only)
+- `/challenge <note-path>` — pressure-test the decision in that note (user_only)
+- `/ghost <question>` — answer in your voice based on your notes (user_only)
+
 **Other**
 - `/forget <pattern>` — queue memory-removal proposals
 - `/dry-run [on|off]` — toggle dry-run mode
@@ -343,6 +352,70 @@ def handle(text: str) -> str | AsyncCommand | None:
             return f'```\n{buf.getvalue()[:3000]}\n```\n\n{"✓ Done." if code == 0 else "⚠ Errors during migration."}'
         except Exception as e:
             return f'Migration failed: {e}'
+
+    # ── Thinking passes (Phase E) ────────────────────────────────────────────
+
+    if cmd in ('/close', '/connect', '/emerge', '/drift', '/ideas'):
+        # User-on-demand pass that writes a digest into the vault
+        name = cmd.lstrip('/')
+        def _run():
+            from storage import run_pass
+            r = run_pass(name)
+            if not r.success:
+                return f'/{name} failed: {r.error}'
+            head = f'**{name.capitalize()} pass — done.**'
+            if r.output_note_id:
+                head += f' Result saved to `{r.output_note_id}`.'
+            return f'{head}\n\n---\n\n{r.text}'
+        return AsyncCommand(label=f'Running {name} pass…', fn=_run)
+
+    if cmd == '/challenge':
+        # /challenge <note-path>   — pressure-test the decision in that note
+        if not args:
+            return ('Usage: `/challenge <note-path>` — pressure-test the '
+                    'decision in that note. Example: '
+                    '`/challenge 70_decisions/2026-05-08`')
+        path = ' '.join(args)
+        def _run():
+            try:
+                import crab_config
+                from storage import Vault, NoteNotFound, run_pass, extract_decision_text
+                vp = (crab_config.get_module_config('obsidian') or {}).get('vault_path')
+                if not vp:
+                    return 'No vault configured.'
+                v = Vault(vp, autostart_watcher=False)
+                try:
+                    note = v.read(path)
+                    decision_text = extract_decision_text(note)
+                finally:
+                    v.stop()
+                r = run_pass('challenge',
+                              extra_slots={'decision_text': decision_text},
+                              entity_hints=[note.title],
+                              target_note_id=path)
+                if not r.success:
+                    return f'/challenge failed: {r.error}'
+                return (f'**Challenge — applied to `{r.output_note_id}` as a callout.**'
+                        f'\n\n---\n\n{r.text}')
+            except Exception as e:
+                return f'/challenge failed: {e}'
+        return AsyncCommand(label='Running challenge…', fn=_run)
+
+    if cmd == '/ghost':
+        if not args:
+            return ('Usage: `/ghost <question>` — answer in the user\'s voice '
+                    'based on their notes. Example: '
+                    '`/ghost what do I think about Rust for systems work?`')
+        question = ' '.join(args)
+        def _run():
+            from storage import run_pass
+            r = run_pass('ghost',
+                          extra_slots={'question': question},
+                          entity_hints=question.split()[:5])
+            if not r.success:
+                return f'/ghost failed: {r.error}'
+            return r.text
+        return AsyncCommand(label='Channeling your voice…', fn=_run)
 
     # ── module surface (sidebar tabs) ────────────────────────────────────────
 
