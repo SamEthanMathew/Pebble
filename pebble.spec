@@ -64,6 +64,27 @@ a = Analysis(
     excludes=[
         # Heavy unused stdlib modules
         'tkinter.test', 'unittest', 'pytest',
+        # Heavy site-packages that show up via transitive imports but Pebble
+        # doesn't actually use. Excluding short-circuits their hooks (~30 min
+        # of analysis on a developer's polluted environment).
+        'cv2', 'opencv-python',
+        'transformers', 'datasets', 'tokenizers',
+        'torch', 'torchvision', 'torchaudio',
+        'tensorflow', 'tf-keras', 'keras',
+        'sklearn', 'scikit-learn', 'skimage', 'scikit-image',
+        'statsmodels', 'patsy',
+        'pygame',
+        'plotly', 'narwhals', 'altair',
+        'pdfminer', 'pypdfium2', 'pypdfium2_raw',
+        'mako',
+        'sentry_sdk',
+        'uvicorn', 'fastapi', 'starlette',
+        'orjson',
+        'pydub',
+        'matplotlib', 'mpl_toolkits',
+        'scipy',
+        'IPython', 'ipykernel', 'jupyter', 'notebook',
+        'pandas',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
