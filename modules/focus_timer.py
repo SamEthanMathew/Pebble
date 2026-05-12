@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _STATE_PATH = Path.home() / '.pebble' / 'focus_state.json'
 
@@ -39,6 +39,14 @@ class FocusTimerModule(PebbleModule):
     display_name = 'Focus Timer'
     description  = 'Pomodoro focus sessions with break reminders — stay in flow'
     icon         = '⏱️'
+
+    _default_tiers = {
+        'status':   ActionTier.AUTO,
+        'start':    ActionTier.NOTIFY,
+        'stop':     ActionTier.NOTIFY,
+        'complete': ActionTier.NOTIFY,
+    }
+
     config_fields = [
         {'key': 'work_minutes',       'label': 'Work session length (default: 25)',           'type': 'text'},
         {'key': 'break_minutes',      'label': 'Short break length (default: 5)',             'type': 'text'},

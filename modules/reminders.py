@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _REMINDERS_PATH = Path.home() / '.pebble' / 'reminders.json'
 
@@ -36,6 +36,12 @@ class RemindersModule(PebbleModule):
     description  = 'Set timed reminders — Pebble will ping you at the right moment'
     icon         = '🔔'
     config_fields: list[dict] = []
+
+    _default_tiers = {
+        'list':   ActionTier.AUTO,
+        'set':    ActionTier.NOTIFY,
+        'cancel': ActionTier.NOTIFY,
+    }
 
     # ── readiness ─────────────────────────────────────────────────────────────
 

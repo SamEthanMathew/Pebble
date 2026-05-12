@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _MAX_DEPTH = 4
 
@@ -16,6 +16,13 @@ class FileSearchModule(PebbleModule):
     display_name = 'File Search'
     description  = 'Search for files on your computer by name or content'
     icon         = '📁'
+
+    _default_tiers = {
+        'find':   ActionTier.AUTO,
+        'recent': ActionTier.AUTO,
+        'open':   ActionTier.NOTIFY,
+    }
+
     config_fields = [
         {'key': 'search_paths',    'label': r'Search in folders (one per line, e.g. C:\Users\sam\Desktop)', 'type': 'text'},
         {'key': 'file_extensions', 'label': 'File types (e.g. .pdf,.docx,.txt — blank = all)',              'type': 'text'},
@@ -146,14 +153,52 @@ class FileSearchModule(PebbleModule):
         if not Path(target).exists():
             return f'File not found: {target}'
 
+        # ── Security: ensure target is inside an allowed search root and
+        # not inside a system / secrets directory.
         try:
-            os.startfile(target)  # Windows: opens with default application
-            return f'Opened: {Path(target).name}'
+            resolved = Path(target).resolve()
+        except Exception:
+            return 'Could not open file: invalid path.'
+
+        denylist_raw = [
+            r'C:\Windows',
+            r'C:\Program Files',
+            r'C:\Program Files (x86)',
+            os.path.expandvars(r'%APPDATA%\Microsoft'),
+            str(Path.home() / '.pebble' / 'secrets'),
+        ]
+        denylist = []
+        for d in denylist_raw:
+            try:
+                denylist.append(Path(d).resolve())
+            except Exception:
+                pass
+        for deny in denylist:
+            try:
+                if resolved == deny or resolved.is_relative_to(deny):
+                    return 'Path outside allowed search roots.'
+            except Exception:
+                pass
+
+        allowed_roots = []
+        for root in self._search_paths():
+            try:
+                allowed_roots.append(root.resolve())
+            except Exception:
+                pass
+        if allowed_roots and not any(
+            resolved == r or resolved.is_relative_to(r) for r in allowed_roots
+        ):
+            return 'Path outside allowed search roots.'
+
+        try:
+            os.startfile(str(resolved))  # Windows: opens with default application
+            return f'Opened: {resolved.name}'
         except AttributeError:
             # Non-Windows fallback
             import subprocess
-            subprocess.Popen(['xdg-open', target])
-            return f'Opened: {Path(target).name}'
+            subprocess.Popen(['xdg-open', str(resolved)])
+            return f'Opened: {resolved.name}'
         except Exception as e:
             return f'Could not open file: {str(e)}'
 

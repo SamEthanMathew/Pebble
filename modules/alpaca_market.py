@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import requests
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _PAPER_BASE = 'https://paper-api.alpaca.markets'
 _LIVE_BASE  = 'https://api.alpaca.markets'
@@ -16,6 +16,14 @@ class AlpacaMarketModule(PebbleModule):
     display_name = 'Alpaca Markets'
     description  = 'Check your portfolio, stock prices, and market news via Alpaca'
     icon         = '📈'
+
+    _default_tiers = {
+        'portfolio': ActionTier.AUTO,
+        'positions': ActionTier.AUTO,
+        'price':     ActionTier.AUTO,
+        'news':      ActionTier.AUTO,
+    }
+
     config_fields = [
         {'key': 'api_key',      'label': 'Alpaca API key',              'type': 'text'},
         {'key': 'api_secret',   'label': 'Alpaca API secret',           'type': 'password'},

@@ -6,7 +6,7 @@ import base64
 from datetime import datetime
 from pathlib import Path
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 class ScreenshotModule(PebbleModule):
@@ -15,6 +15,10 @@ class ScreenshotModule(PebbleModule):
     description  = "Let Pebble see your screen — captures a screenshot and describes what it sees"
     icon         = '🖥️'
     config_fields: list[dict] = []
+
+    _default_tiers = {
+        'capture': ActionTier.NOTIFY,
+    }
 
     def is_ready(self) -> bool:
         try:

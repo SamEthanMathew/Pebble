@@ -7,13 +7,21 @@ import email.mime.text
 import threading
 from typing import Callable
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 class GmailModule(PebbleModule):
     name         = 'gmail'
     display_name = 'Gmail'
     icon         = '📧'
+
+    _default_tiers = {
+        'recent':      ActionTier.AUTO,
+        'search':      ActionTier.AUTO,
+        'unread':      ActionTier.AUTO,
+        'draft_reply': ActionTier.NOTIFY,
+    }
+
     config_fields = [
         {
             'key':   '_google_status',
@@ -94,6 +102,11 @@ class GmailModule(PebbleModule):
                 to: str = '', subject: str = '', body: str = '',
                 thread_id: str = '', **_) -> str:
         try:
+            max_results = min(max(1, int(max_results)), 25)
+        except (TypeError, ValueError):
+            max_results = 5
+
+        try:
             service = self._get_gmail()
         except Exception:
             return 'Gmail not connected — check credentials in Settings.'
@@ -104,7 +117,7 @@ class GmailModule(PebbleModule):
             elif action == 'search':
                 return self._action_list(service, q=query, max_results=max_results)
             elif action == 'unread':
-                return self._action_list(service, q='is:unread', max_results=10)
+                return self._action_list(service, q='is:unread', max_results=min(max_results, 25))
             elif action == 'draft_reply':
                 return self._action_draft_reply(service, to=to, subject=subject,
                                                 body=body, thread_id=thread_id)
@@ -123,6 +136,10 @@ class GmailModule(PebbleModule):
         return GoogleServices().gmail
 
     def _action_list(self, service, q: str, max_results: int) -> str:
+        try:
+            max_results = min(max(1, int(max_results)), 25)
+        except (TypeError, ValueError):
+            max_results = 5
         kwargs: dict = {'userId': 'me', 'maxResults': max_results}
         if q:
             kwargs['q'] = q

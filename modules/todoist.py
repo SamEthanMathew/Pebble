@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import requests
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _BASE_URL = 'https://api.todoist.com/rest/v2'
 
@@ -14,6 +14,15 @@ class TodoistModule(PebbleModule):
     display_name = 'Todoist'
     description  = 'Access your Todoist tasks — add, list, complete tasks across all projects'
     icon         = '🔴'
+
+    _default_tiers = {
+        'list':     ActionTier.AUTO,
+        'today':    ActionTier.AUTO,
+        'projects': ActionTier.AUTO,
+        'add':      ActionTier.NOTIFY,
+        'complete': ActionTier.NOTIFY,
+    }
+
     config_fields = [
         {'key': 'api_token',       'label': 'Todoist API token (Settings → Integrations → API)', 'type': 'password'},
         {'key': 'default_project', 'label': 'Default project name (optional)',                    'type': 'text'},
@@ -154,6 +163,8 @@ class TodoistModule(PebbleModule):
     def _complete_task(self, task_id: str) -> str:
         if not task_id.strip():
             return 'No task_id provided.'
+        if not task_id.strip().isdigit():
+            return 'Invalid task ID.'
         resp = requests.post(
             f'{_BASE_URL}/tasks/{task_id.strip()}/close',
             headers=self._headers(),

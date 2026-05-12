@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import urllib.request
 import urllib.parse
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 class CryptoModule(PebbleModule):
@@ -14,6 +14,13 @@ class CryptoModule(PebbleModule):
     description  = 'Get live cryptocurrency prices, market cap, and 24h change via CoinGecko'
     icon         = '₿'
     config_fields: list[dict] = []
+
+    _default_tiers = {
+        'price':    ActionTier.AUTO,
+        'trending': ActionTier.AUTO,
+        'top':      ActionTier.AUTO,
+        'search':   ActionTier.AUTO,
+    }
 
     _BASE = 'https://api.coingecko.com/api/v3'
 

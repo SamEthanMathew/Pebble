@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import requests
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search'
 
@@ -14,6 +14,11 @@ class BraveSearchModule(PebbleModule):
     display_name = 'Web Search'
     description  = 'Search the web for current information. Get your free API key at brave.com/search/api'
     icon         = '🔍'
+
+    _default_tiers = {
+        'search': ActionTier.AUTO,
+    }
+
     config_fields = [
         {'key': 'brave_api_key', 'label': 'Brave Search API key', 'type': 'password'},
     ]

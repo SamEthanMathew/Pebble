@@ -1,7 +1,7 @@
 """Speech-to-Text module — uses speech_recognition + pyaudio."""
 
 from __future__ import annotations
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 class STTModule(PebbleModule):
@@ -9,6 +9,12 @@ class STTModule(PebbleModule):
     display_name = 'Speech Input'
     description  = 'Talk to Pebble — press mic and speak, Pebble transcribes your voice'
     icon         = '🎤'
+
+    _default_tiers = {
+        'status': ActionTier.AUTO,
+        'record': ActionTier.NOTIFY,
+    }
+
     config_fields = [
         {'key': 'language', 'label': 'Language code (default: en-US)', 'type': 'text'},
     ]

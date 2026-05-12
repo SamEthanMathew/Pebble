@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 import crab_config
 
 _JOURNAL_DIR = Path.home() / '.pebble' / 'journal'
@@ -15,6 +15,14 @@ class JournalModule(PebbleModule):
     display_name = 'Daily Journal'
     description  = 'Guided daily reflection — start a journal entry, save it, and review past entries'
     icon         = '📔'
+
+    _default_tiers = {
+        'start':     ActionTier.AUTO,
+        'get_today': ActionTier.AUTO,
+        'get_date':  ActionTier.AUTO,
+        'save':      ActionTier.NOTIFY,
+    }
+
     config_fields = [
         {
             'key':   'save_folder',

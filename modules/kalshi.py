@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 import urllib.parse
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
+
+_TICKER_RE = re.compile(r'[A-Z0-9_\-\.]{1,40}')
 
 
 class KalshiModule(PebbleModule):
@@ -13,6 +16,15 @@ class KalshiModule(PebbleModule):
     display_name = 'Kalshi'
     description  = 'Check Kalshi prediction market prices, your positions, and portfolio balance'
     icon         = '📊'
+
+    _default_tiers = {
+        'balance':   ActionTier.AUTO,
+        'positions': ActionTier.AUTO,
+        'markets':   ActionTier.AUTO,
+        'search':    ActionTier.AUTO,
+        'market':    ActionTier.AUTO,
+    }
+
     config_fields = [
         {'key': 'api_key',    'label': 'API Key',    'type': 'password'},
         {'key': 'api_secret', 'label': 'API Secret', 'type': 'password'},
@@ -139,6 +151,9 @@ class KalshiModule(PebbleModule):
     def _market(self, ticker: str) -> str:
         if not ticker:
             return 'Provide a market ticker.'
+        ticker = ticker.strip()
+        if not _TICKER_RE.fullmatch(ticker):
+            return 'Invalid ticker.'
         data = self._get(f'markets/{ticker}')
         m = data.get('market', data)
         title = m.get('title', m.get('subtitle', '?'))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import requests
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _API_BASE = 'https://api.github.com'
 
@@ -14,6 +14,16 @@ class GitHubModule(PebbleModule):
     display_name = 'GitHub'
     description  = 'Check issues, PRs, notifications, and repos on GitHub'
     icon         = '🐙'
+
+    _default_tiers = {
+        'notifications': ActionTier.AUTO,
+        'issues':        ActionTier.AUTO,
+        'prs':           ActionTier.AUTO,
+        'search_repos':  ActionTier.AUTO,
+        'repo_info':     ActionTier.AUTO,
+        'create_issue':  ActionTier.ASK,
+    }
+
     config_fields = [
         {'key': 'personal_access_token', 'label': 'Personal Access Token (PAT)', 'type': 'password'},
         {'key': 'default_repo',          'label': 'Default repo (owner/repo)',    'type': 'text'},

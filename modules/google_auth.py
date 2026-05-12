@@ -17,8 +17,18 @@ SCOPES = [
     'https://www.googleapis.com/auth/calendar',
 ]
 
-TOKEN_PATH   = Path.home() / '.pebble' / 'google_token.json'
-SECRETS_PATH = Path.home() / '.pebble' / 'secrets' / 'google_oauth.json'
+TOKEN_PATH       = Path.home() / '.pebble' / 'secrets' / 'google_token.json'
+_LEGACY_TOKEN_PATH = Path.home() / '.pebble' / 'google_token.json'
+SECRETS_PATH     = Path.home() / '.pebble' / 'secrets' / 'google_oauth.json'
+
+# One-time migration: move legacy token to the new secrets/ location so existing
+# users aren't logged out. Best-effort; never crash startup.
+try:
+    if _LEGACY_TOKEN_PATH.exists() and not TOKEN_PATH.exists():
+        TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _LEGACY_TOKEN_PATH.rename(TOKEN_PATH)
+except Exception:
+    pass
 
 _AUTH_URI    = 'https://accounts.google.com/o/oauth2/auth'
 _TOKEN_URI   = 'https://oauth2.googleapis.com/token'
@@ -99,6 +109,10 @@ def save_oauth_paste(text: str) -> bool:
         json.dumps(cfg, indent=2),
         encoding='utf-8',
     )
+    try:
+        os.chmod(SECRETS_PATH, 0o600)
+    except Exception:
+        pass
     return True
 
 
@@ -170,6 +184,11 @@ class GoogleServices:
                 creds = flow.run_local_server(port=0)
             TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
             TOKEN_PATH.write_text(creds.to_json(), encoding='utf-8')
+            try:
+                os.chmod(TOKEN_PATH, 0o600)
+            except Exception:
+                # Best-effort on Windows (NTFS DACLs do the real work).
+                pass
 
         self.gmail    = build('gmail',    'v1', credentials=creds)
         self.calendar = build('calendar', 'v3', credentials=creds)

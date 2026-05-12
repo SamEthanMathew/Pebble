@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 import re
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 class GCalModule(PebbleModule):
@@ -12,6 +12,13 @@ class GCalModule(PebbleModule):
     display_name = 'Google Calendar'
     description  = 'View upcoming events, find free time, and create new events on Google Calendar'
     icon         = '📅'
+
+    _default_tiers = {
+        'get_events':     ActionTier.AUTO,
+        'find_free_time': ActionTier.AUTO,
+        'create_event':   ActionTier.ASK,
+    }
+
     config_fields = [
         {'key': '_google_status', 'label': 'Google Account', 'type': 'google_status'},
         {'key': 'calendar_id',    'label': 'Calendar ID (leave blank for primary)', 'type': 'text'},

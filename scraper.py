@@ -9,13 +9,60 @@ manually) — that's a Phase 4 chat command.
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
 import audit
 import cache
+
+
+def _validate_url(url: str) -> str | None:
+    """Return None if `url` is safe to fetch, else an error message."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return f'Refusing malformed URL: {url}'
+
+    scheme = (parsed.scheme or '').lower()
+    if scheme not in ('http', 'https'):
+        return f'Refusing non-http(s) URL scheme: {scheme or "(none)"}'
+
+    host = (parsed.hostname or '').strip()
+    if not host:
+        return f'Refusing URL with no host: {url}'
+
+    if host.lower() in ('localhost', 'localhost.localdomain'):
+        return f'Refusing private/loopback URL: {host}'
+
+    # If host already parses as an IP, check that directly.
+    ip = None
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # Otherwise try DNS resolution. If DNS fails, fall through and let
+        # requests.get raise (covered as fetch_failed in the audit log).
+        try:
+            addr = socket.gethostbyname(host)
+            ip = ipaddress.ip_address(addr)
+        except Exception:
+            ip = None
+
+    if ip is not None and (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return f'Refusing private/loopback URL: {host}'
+
+    return None
 
 try:
     import trafilatura  # type: ignore
@@ -57,6 +104,17 @@ def fetch(url: str, *, source: str = 'generic',
         cached = cache.get(source, url)
         if cached is not None:
             return cached
+
+    # Security: refuse non-http(s) schemes and private/loopback hosts (SSRF).
+    err = _validate_url(url)
+    if err is not None:
+        audit.append({
+            'module':  'scraper', 'action': 'fetch_blocked',
+            'args':    {'url': url, 'source': source},
+            'result':  {'error': err},
+            'tier':    'auto', 'source': 'scraper',
+        })
+        return None
 
     try:
         resp = requests.get(url, timeout=timeout,

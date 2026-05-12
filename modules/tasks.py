@@ -5,7 +5,7 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _TASKS_PATH = Path.home() / '.pebble' / 'tasks.json'
 
@@ -16,6 +16,15 @@ class TaskModule(PebbleModule):
     description  = 'Create, list, and complete personal tasks and reminders'
     icon         = '✅'
     config_fields: list[dict] = []
+
+    _default_tiers = {
+        'list':          ActionTier.AUTO,
+        'pending':       ActionTier.AUTO,
+        'carry_forward': ActionTier.AUTO,
+        'create':        ActionTier.NOTIFY,
+        'complete':      ActionTier.NOTIFY,
+        'set_due':       ActionTier.NOTIFY,
+    }
 
     def is_ready(self) -> bool:
         return True

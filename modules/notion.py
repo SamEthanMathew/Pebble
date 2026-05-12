@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import requests
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _BASE_URL = 'https://api.notion.com/v1'
 _NOTION_VERSION = '2022-06-28'
@@ -14,6 +14,14 @@ class NotionModule(PebbleModule):
     name         = 'notion'
     display_name = 'Notion'
     icon         = '⬛'
+
+    _default_tiers = {
+        'search':      ActionTier.AUTO,
+        'read_page':   ActionTier.AUTO,
+        'create_page': ActionTier.NOTIFY,
+        'add_task':    ActionTier.NOTIFY,
+    }
+
     config_fields = [
         {'key': 'notion_api_key',      'label': 'Integration token (secret_...)', 'type': 'password'},
         {'key': 'default_database_id', 'label': 'Default database ID',            'type': 'text'},

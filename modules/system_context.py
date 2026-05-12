@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 import platform
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 class SystemContextModule(PebbleModule):
@@ -12,6 +12,15 @@ class SystemContextModule(PebbleModule):
     display_name = 'System Context'
     description  = 'Gives Pebble access to the current date, time, and system info'
     icon         = '🕐'
+
+    # No named actions today (single endpoint returns date/time/OS), but
+    # declaring an AUTO default keeps the autonomy layer from gating reads.
+    _default_tiers = {
+        'cpu':       ActionTier.AUTO,
+        'memory':    ActionTier.AUTO,
+        'processes': ActionTier.AUTO,
+    }
+
     config_fields = []
 
     def is_ready(self) -> bool:

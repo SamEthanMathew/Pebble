@@ -6,7 +6,7 @@ import datetime
 
 import requests
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _API_BASE = 'https://slack.com/api'
 
@@ -16,6 +16,15 @@ class SlackModule(PebbleModule):
     display_name = 'Slack'
     description  = 'Read and send Slack messages, search channels'
     icon         = '💬'
+
+    _default_tiers = {
+        'recent':   ActionTier.AUTO,
+        'search':   ActionTier.AUTO,
+        'channels': ActionTier.AUTO,
+        'send':     ActionTier.ASK,
+        'dm':       ActionTier.ASK,
+    }
+
     config_fields = [
         {'key': 'bot_token',          'label': 'Token (xoxb-/xoxp-/xoxe.xoxp-)',     'type': 'password'},
         {'key': 'default_channel',    'label': 'Default channel (e.g. general)',     'type': 'text'},

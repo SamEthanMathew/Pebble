@@ -17,12 +17,22 @@ import threading
 from datetime import date
 from pathlib import Path
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 # One Vault instance per vault path, shared across module re-instantiations
 _VAULT_CACHE: dict[str, object] = {}
 _VAULT_LOCK = threading.Lock()
+
+
+def _path_inside(target, root) -> bool:
+    """True iff resolved `target` equals or is contained in resolved `root`."""
+    try:
+        t = Path(target).resolve()
+        r = Path(root).resolve()
+        return t == r or t.is_relative_to(r)
+    except Exception:
+        return False
 
 
 def _vault_for(path: str):
@@ -51,6 +61,15 @@ class ObsidianModule(PebbleModule):
     display_name = 'Obsidian'
     description  = 'Search, read, write, and manage notes in your Obsidian vault'
     icon         = '🟣'
+
+    _default_tiers = {
+        'search':       ActionTier.AUTO,
+        'read':         ActionTier.AUTO,
+        'list_folder':  ActionTier.AUTO,
+        'write':        ActionTier.NOTIFY,
+        'append_daily': ActionTier.NOTIFY,
+    }
+
     config_fields = [
         {'key': 'vault_path', 'label': 'Vault folder path', 'type': 'path'},
     ]
@@ -58,6 +77,21 @@ class ObsidianModule(PebbleModule):
     def __init__(self, cfg: dict):
         super().__init__(cfg)
         self._vault_path = Path(cfg.get('vault_path', ''))
+
+    def _safe_join(self, rel: str) -> Path | None:
+        """Resolve `rel` against the vault and confirm it stays inside.
+        Returns None when the path escapes the vault root."""
+        try:
+            root = self._vault_path.resolve()
+            target = (self._vault_path / rel).resolve() if rel else root
+        except Exception:
+            return None
+        try:
+            if target == root or target.is_relative_to(root):
+                return target
+        except Exception:
+            return None
+        return None
 
     def is_ready(self) -> bool:
         return self._vault_path.is_dir()
@@ -148,10 +182,16 @@ class ObsidianModule(PebbleModule):
         if vault is None:
             return f'No note found matching "{path}".'
 
+        # Reject any direct path that escapes the vault root.
+        if self._safe_join(path) is None:
+            return 'Path outside vault.'
+
         # Try id / path lookup first
         from storage import NoteNotFound
         try:
             note = vault.read(path)
+            if self._safe_join(str(note.path)) is None and not _path_inside(note.path, self._vault_path):
+                return 'Path outside vault.'
             return note.path.read_text(encoding='utf-8', errors='ignore')
         except NoteNotFound:
             pass
@@ -160,6 +200,8 @@ class ObsidianModule(PebbleModule):
         needle = path.lower().removesuffix('.md').strip()
         for n in vault.list():
             if needle in n.id.rsplit('/', 1)[-1].lower():
+                if not _path_inside(n.path, self._vault_path):
+                    continue
                 return n.path.read_text(encoding='utf-8', errors='ignore')
         return f'No note found matching "{path}".'
 
@@ -180,11 +222,16 @@ class ObsidianModule(PebbleModule):
         else:
             return 'Provide a path or title for the note to write.'
 
+        if self._safe_join(rel) is None:
+            return 'Path outside vault.'
+
         try:
             note = vault.create_note(
                 rel, body=content, frontmatter={},
                 source='user', trigger='llm_tool_write', confidence=1.0,
             )
+            if not _path_inside(note.path, self._vault_path):
+                return 'Path outside vault.'
             return f'Note saved to {note.path}'
         except Exception as e:
             return f'Error writing note: {e}'
@@ -200,17 +247,23 @@ class ObsidianModule(PebbleModule):
 
         try:
             daily = vault.daily_note('today', create_if_missing=True)
+            if not _path_inside(daily.path, self._vault_path):
+                return 'Path outside vault.'
             note  = vault.append_block(
                 daily.id, content,
                 trigger='append_daily', confidence=1.0,
                 label='pebble', title=date.today().isoformat(),
             )
+            if not _path_inside(note.path, self._vault_path):
+                return 'Path outside vault.'
             return f'Appended to daily note: {note.path}'
         except Exception as e:
             return f'Error updating daily note: {e}'
 
     def _action_list_folder(self, path: str) -> str:
-        folder = self._vault_path / path if path.strip() else self._vault_path
+        folder = self._safe_join(path)
+        if folder is None:
+            return 'Path outside vault.'
         if not folder.is_dir():
             return f'Folder not found: "{path}".'
         try:

@@ -4,20 +4,87 @@ from __future__ import annotations
 
 import base64
 import http.server
+import json
+import os
 import threading
 import time
 import urllib.parse
 import webbrowser
+from pathlib import Path
 from typing import Optional
 
 import requests
 
 import crab_config
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _API_BASE   = 'https://api.spotify.com/v1'
 _TOKEN_URL  = 'https://accounts.spotify.com/api/token'
 _AUTH_URL   = 'https://accounts.spotify.com/authorize'
+
+# Secrets file lives outside config.json so tokens never get committed via
+# shared config dumps or backups. Only contains token-shaped fields.
+_SECRETS_PATH = Path.home() / '.pebble' / 'secrets' / 'spotify_tokens.json'
+_TOKEN_KEYS   = ('access_token', 'refresh_token', 'expires_at')
+
+
+def _read_token_secrets() -> dict:
+    """Read tokens from the dedicated secrets file. Returns {} on any error."""
+    if not _SECRETS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(_SECRETS_PATH.read_text(encoding='utf-8'))
+        if isinstance(data, dict):
+            return {k: data.get(k, '') for k in _TOKEN_KEYS if data.get(k)}
+    except Exception:
+        pass
+    return {}
+
+
+def _write_token_secrets(tokens: dict) -> None:
+    """Write only token-shaped fields to the secrets file. Best-effort chmod 600."""
+    payload = {k: tokens.get(k, '') for k in _TOKEN_KEYS if tokens.get(k)}
+    try:
+        _SECRETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SECRETS_PATH.write_text(
+            json.dumps(payload, indent=2),
+            encoding='utf-8',
+        )
+        try:
+            os.chmod(_SECRETS_PATH, 0o600)
+        except Exception:
+            # NTFS DACLs do the real protection on Windows.
+            pass
+    except Exception:
+        pass
+
+
+def _load_merged_cfg(name: str = 'spotify') -> dict:
+    """Merge crab_config module cfg with the secrets file (secrets win on token keys).
+
+    Also performs a one-time migration: if the legacy config.json still carries
+    tokens, lift them into the secrets file and strip them from config on the
+    next write path.
+    """
+    base = dict(crab_config.get_module_config(name) or {})
+    secrets = _read_token_secrets()
+
+    # Migrate any legacy tokens stranded in config.json
+    legacy_tokens = {k: base.get(k, '') for k in _TOKEN_KEYS if base.get(k)}
+    if legacy_tokens and not secrets:
+        _write_token_secrets(legacy_tokens)
+        secrets = _read_token_secrets()
+        # Strip token-shaped fields from config.json so they don't linger.
+        sanitized = {k: v for k, v in base.items() if k not in _TOKEN_KEYS}
+        try:
+            crab_config.set_module_config(name, sanitized)
+            base = sanitized
+        except Exception:
+            pass
+
+    # Secrets file wins on token keys.
+    merged = {**base, **secrets}
+    return merged
 
 
 class SpotifyModule(PebbleModule):
@@ -32,6 +99,37 @@ class SpotifyModule(PebbleModule):
         {'key': 'access_token',  'label': 'Access token (auto-managed after connect)',             'type': 'password'},
         {'key': 'refresh_token', 'label': 'Refresh token (auto-managed)',                         'type': 'password'},
     ]
+
+    _default_tiers = {
+        'now_playing': ActionTier.AUTO,
+        'search':      ActionTier.AUTO,
+        'queue':       ActionTier.AUTO,
+        'play':        ActionTier.NOTIFY,
+        'pause':       ActionTier.NOTIFY,
+        'skip':        ActionTier.NOTIFY,
+        'previous':    ActionTier.NOTIFY,
+    }
+
+    def __init__(self, cfg: dict):
+        # Merge in tokens from the secrets file so the rest of the class can read
+        # them off self.cfg the way it always has.
+        super().__init__(cfg)
+        try:
+            secrets = _read_token_secrets()
+            if secrets:
+                self.cfg = {**self.cfg, **secrets}
+            else:
+                # Migrate legacy tokens stranded in config.json on first load.
+                legacy = {k: cfg.get(k, '') for k in _TOKEN_KEYS if cfg.get(k)}
+                if legacy:
+                    _write_token_secrets(legacy)
+                    sanitized = {k: v for k, v in cfg.items() if k not in _TOKEN_KEYS}
+                    try:
+                        crab_config.set_module_config('spotify', sanitized)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     # ── readiness ─────────────────────────────────────────────────────────────
 
@@ -149,13 +247,20 @@ class SpotifyModule(PebbleModule):
         if not access_token:
             return None
 
-        # Persist updated tokens
+        # Persist updated tokens to the secrets file ONLY. Non-sensitive
+        # fields (client_id, redirect_uri, etc.) stay in config.json.
+        new_tokens = {
+            'access_token':  access_token,
+            'refresh_token': data.get('refresh_token') or self.cfg.get('refresh_token', ''),
+        }
+        if 'expires_in' in data:
+            new_tokens['expires_at'] = str(int(time.time()) + int(data['expires_in']))
+        _write_token_secrets(new_tokens)
+
+        # In-memory cfg keeps the merged view for the rest of the request.
         updated_cfg = dict(self.cfg)
-        updated_cfg['access_token'] = access_token
-        if 'refresh_token' in data:
-            updated_cfg['refresh_token'] = data['refresh_token']
+        updated_cfg.update(new_tokens)
         self.cfg = updated_cfg
-        crab_config.set_module_config('spotify', updated_cfg)
 
         return {'Authorization': f'Bearer {access_token}'}
 
@@ -377,14 +482,28 @@ class SpotifyModule(PebbleModule):
             return False, f'Token exchange failed: {r.status_code} {r.text}'
 
         data = r.json()
+        # Non-sensitive fields land in config.json. client_secret remains in
+        # config.json because the OAuth refresh flow needs it and we don't
+        # yet have a separate "app secrets" channel; tokens themselves are
+        # the higher-value secret and they go to the secrets file.
         cfg  = crab_config.get_module_config('spotify')
         cfg.update({
             'client_id':     client_id,
             'client_secret': client_secret,
             'redirect_uri':  redirect_uri,
+        })
+        # Strip any legacy tokens from config.json on connect.
+        for k in _TOKEN_KEYS:
+            cfg.pop(k, None)
+        crab_config.set_module_config('spotify', cfg)
+
+        # Tokens go to the dedicated secrets file with restrictive perms.
+        new_tokens = {
             'access_token':  data.get('access_token', ''),
             'refresh_token': data.get('refresh_token', ''),
-        })
-        crab_config.set_module_config('spotify', cfg)
+        }
+        if 'expires_in' in data:
+            new_tokens['expires_at'] = str(int(time.time()) + int(data['expires_in']))
+        _write_token_secrets(new_tokens)
 
         return True, 'Spotify connected successfully!'

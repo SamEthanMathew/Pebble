@@ -4,7 +4,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 def _read_win32_clipboard() -> str:
@@ -31,6 +31,11 @@ class ClipboardModule(PebbleModule):
     display_name = 'Clipboard'
     description  = 'Lets Pebble read what you currently have copied'
     icon         = '📋'
+
+    _default_tiers = {
+        'get': ActionTier.AUTO,
+    }
+
     config_fields = []
 
     def is_ready(self) -> bool:

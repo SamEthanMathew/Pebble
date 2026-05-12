@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import requests
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 _CURRENT_URL  = 'https://api.openweathermap.org/data/2.5/weather'
 _FORECAST_URL = 'https://api.openweathermap.org/data/2.5/forecast'
@@ -34,6 +34,12 @@ class WeatherModule(PebbleModule):
     display_name = 'Weather'
     description  = 'Get current weather and forecasts. Free API key at openweathermap.org/api'
     icon         = '🌤️'
+
+    _default_tiers = {
+        'current':  ActionTier.AUTO,
+        'forecast': ActionTier.AUTO,
+    }
+
     config_fields = [
         {'key': 'api_key',  'label': 'OpenWeatherMap API key',                      'type': 'password'},
         {'key': 'location', 'label': 'Default location (e.g. "Pittsburgh, US")',     'type': 'text'},

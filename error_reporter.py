@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 import sys
 import threading
 import traceback
@@ -21,6 +22,47 @@ from typing import Any
 _ERRORS_DIR = Path.home() / '.pebble' / 'errors'
 _INSTALLED = False
 _LOCK = threading.Lock()
+
+
+# ── PII redaction ─────────────────────────────────────────────────────────────
+# Errors get appended to a JSONL file users sometimes share when filing a bug
+# (per setup.html's troubleshooting page). Strip the obvious credential/PII
+# patterns before write so users don't accidentally leak.
+_REDACT_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # OAuth bearer tokens & known provider key prefixes
+    (re.compile(r'\b(Bearer\s+)([A-Za-z0-9._\-]+)\b'),            r'\1[REDACTED]'),
+    (re.compile(r'\bsk-(?:proj-|ant-api03-)?[A-Za-z0-9_\-]{20,}'), '[REDACTED_OPENAI_OR_ANTHROPIC_KEY]'),
+    (re.compile(r'\bGOCSPX-[A-Za-z0-9_\-]{10,}'),                  '[REDACTED_GOOGLE_SECRET]'),
+    (re.compile(r'\bxox[abeprs]-[A-Za-z0-9._\-]+'),                '[REDACTED_SLACK_TOKEN]'),
+    (re.compile(r'\bgithub_pat_[A-Za-z0-9_]{20,}'),                '[REDACTED_GITHUB_PAT]'),
+    (re.compile(r'\bghp_[A-Za-z0-9]{20,}'),                        '[REDACTED_GITHUB_PAT]'),
+    (re.compile(r'\bAIza[A-Za-z0-9_\-]{20,}'),                     '[REDACTED_GOOGLE_API_KEY]'),
+    # Email addresses
+    (re.compile(r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b'), '[REDACTED_EMAIL]'),
+    # URL query strings (may carry tokens, refresh_tokens, etc.)
+    (re.compile(r'(\?|&)(access_token|refresh_token|token|api_key|client_secret|password)=[^&\s"]+'),
+                                                                   r'\1\2=[REDACTED]'),
+]
+
+
+def _redact(text: str) -> str:
+    """Strip credential-ish and email patterns from a string before logging."""
+    if not text:
+        return text
+    for pat, repl in _REDACT_PATTERNS:
+        text = pat.sub(repl, text)
+    return text
+
+
+def _redact_value(v: Any) -> Any:
+    """Recursively redact strings inside a context dict/list."""
+    if isinstance(v, str):
+        return _redact(v)
+    if isinstance(v, dict):
+        return {k: _redact_value(val) for k, val in v.items()}
+    if isinstance(v, list):
+        return [_redact_value(item) for item in v]
+    return v
 
 
 def _now_iso() -> str:
@@ -42,9 +84,9 @@ def report(exc_type, exc_value, exc_tb, *, source: str = 'main',
             'timestamp':  _now_iso(),
             'source':     source,
             'error_type': getattr(exc_type, '__name__', str(exc_type)),
-            'message':    str(exc_value)[:1000],
-            'traceback':  ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))[:8000],
-            'context':    context or {},
+            'message':    _redact(str(exc_value)[:1000]),
+            'traceback':  _redact(''.join(traceback.format_exception(exc_type, exc_value, exc_tb))[:8000]),
+            'context':    _redact_value(context or {}),
         }
         with _LOCK:
             with path.open('a', encoding='utf-8') as f:

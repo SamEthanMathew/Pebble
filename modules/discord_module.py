@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import urllib.request
 import urllib.parse
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 class DiscordModule(PebbleModule):
@@ -13,6 +13,15 @@ class DiscordModule(PebbleModule):
     display_name = 'Discord'
     description  = 'Read Discord messages, send messages, and check DMs'
     icon         = '💬'
+
+    _default_tiers = {
+        'recent':   ActionTier.AUTO,
+        'channels': ActionTier.AUTO,
+        'guilds':   ActionTier.AUTO,
+        'dms':      ActionTier.AUTO,
+        'send':     ActionTier.ASK,
+    }
+
     config_fields = [
         {'key': 'bot_token',    'label': 'Bot Token',               'type': 'password'},
         {'key': 'user_token',   'label': 'User Token (optional)',    'type': 'password'},

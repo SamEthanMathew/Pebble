@@ -6,7 +6,7 @@ import json
 import urllib.request
 import urllib.parse
 import datetime
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 
 class CanvasModule(PebbleModule):
@@ -14,6 +14,16 @@ class CanvasModule(PebbleModule):
     display_name = 'Canvas LMS'
     description  = 'Check assignments, grades, courses, and announcements from Canvas'
     icon         = '🎓'
+
+    _default_tiers = {
+        'courses':       ActionTier.AUTO,
+        'assignments':   ActionTier.AUTO,
+        'upcoming':      ActionTier.AUTO,
+        'missing':       ActionTier.AUTO,
+        'announcements': ActionTier.AUTO,
+        'grades':        ActionTier.AUTO,
+    }
+
     config_fields = [
         {'key': 'base_url',      'label': 'Canvas URL (e.g. https://canvas.cmu.edu)', 'type': 'text'},
         {'key': 'access_token',  'label': 'Access Token',  'type': 'password'},
@@ -49,6 +59,15 @@ class CanvasModule(PebbleModule):
     def execute(self, action: str = 'upcoming', course_id: str = '', **_) -> str:
         base = self.cfg.get('base_url', '').rstrip('/')
         token = self.cfg.get('access_token', '')
+
+        # Validate base_url uses https
+        if not base.startswith('https://'):
+            return 'Canvas error: base_url must start with https://.'
+
+        # Validate course_id is a positive integer string (if provided)
+        course_id = (course_id or '').strip()
+        if course_id and not course_id.isdigit():
+            return 'Canvas error: invalid course_id (must be numeric).'
 
         def _get(path: str, params: dict | None = None) -> list | dict:
             url = f'{base}/api/v1/{path}'

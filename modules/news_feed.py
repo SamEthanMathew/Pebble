@@ -8,7 +8,7 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
-from .base import PebbleModule
+from .base import ActionTier, PebbleModule
 
 DEFAULT_FEEDS = [
     'https://feeds.feedburner.com/TechCrunch',
@@ -30,6 +30,12 @@ class NewsFeedModule(PebbleModule):
     display_name = 'News Feed'
     description  = 'Get latest news from RSS feeds — tech, finance, or custom feeds'
     icon         = '📰'
+
+    _default_tiers = {
+        'latest': ActionTier.AUTO,
+        'search': ActionTier.AUTO,
+    }
+
     config_fields = [
         {'key': 'feeds',     'label': 'RSS feed URLs (one per line)',       'type': 'text'},
         {'key': 'max_items', 'label': 'Max items per feed (default: 5)',    'type': 'text'},
