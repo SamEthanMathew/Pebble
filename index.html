@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pebble — personal AI assistant for Windows</title>
+  <meta name="description" content="A personal AI assistant that lives on your Windows taskbar as a pixel-art crab. Local-first, vault-backed, and gated through an autonomy layer.">
+  <meta property="og:title" content="Pebble — personal AI assistant for Windows">
+  <meta property="og:description" content="A personal AI assistant that lives on your Windows taskbar as a pixel-art crab.">
+  <meta property="og:image" content="assets/logo-square.png">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#0b1424">
+  <link rel="icon" href="favicon.ico">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="index.html" class="brand">
+      <img src="assets/logo.png" alt="Pebble">
+    </a>
+    <nav class="nav">
+      <a href="#features">Features</a>
+      <a href="#safety">Safety</a>
+      <a href="setup.html">Setup</a>
+      <a href="https://github.com/SamEthanMathew/Pebble">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <div class="container">
+      <img src="assets/crab.png" alt="Pebble crab mascot" class="crab">
+      <h1>Your AI desktop companion</h1>
+      <p class="tagline">
+        A personal AI assistant that lives on your Windows taskbar as a
+        pixel-art crab. Runs locally, reads your calendar and email, and
+        proposes actions you approve before they happen.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary"
+           href="https://github.com/SamEthanMathew/Pebble/releases/download/v0.3.0/Pebble-v0.3.0-windows.zip">
+          Download for Windows
+        </a>
+        <a class="btn btn-secondary" href="setup.html">
+          Setup guide
+        </a>
+        <a class="btn btn-secondary" href="https://github.com/SamEthanMathew/Pebble">
+          Read the source
+        </a>
+      </div>
+      <p class="platform-note">
+        Windows 10 / 11 · v0.3.0 · ~500&nbsp;MB download
+      </p>
+    </div>
+  </section>
+
+  <section id="features" class="section">
+    <div class="container">
+      <div class="section-head">
+        <h2>What Pebble does for you</h2>
+        <p>Real planners doing real reasoning — not a chatbot pretending to.</p>
+      </div>
+      <div class="feature-grid">
+
+        <div class="feature">
+          <span class="ico">☀</span>
+          <h3>Morning briefing</h3>
+          <p>One summary every morning combining today's calendar, unread
+          email triage, and upcoming deadlines.</p>
+        </div>
+
+        <div class="feature">
+          <span class="ico">✉</span>
+          <h3>Comms triage</h3>
+          <p>Classifies your inbox into action-required / FYI / ignore, and
+          drafts replies for the messages that need one.</p>
+        </div>
+
+        <div class="feature">
+          <span class="ico">⏱</span>
+          <h3>Smart scheduling</h3>
+          <p>Reasons about how your day is allocated — not just lists
+          events, but flags conflicts and suggests free-window use.</p>
+        </div>
+
+        <div class="feature">
+          <span class="ico">📚</span>
+          <h3>Exam-prep planning</h3>
+          <p>Give Pebble a course and an exam date; it reasons backward to
+          produce a day-by-day study plan you can run.</p>
+        </div>
+
+        <div class="feature">
+          <span class="ico">🌙</span>
+          <h3>Daily wrap-up</h3>
+          <p>An evening reflection plus a preview of tomorrow, appended to
+          your Obsidian daily note.</p>
+        </div>
+
+        <div class="feature">
+          <span class="ico">🗂</span>
+          <h3>Vault-backed memory</h3>
+          <p>Pebble's persistent knowledge lives in your Obsidian vault,
+          with provenance markers so you always see what's yours vs.
+          Pebble's.</p>
+        </div>
+
+        <div class="feature">
+          <span class="ico">🧠</span>
+          <h3>Thinking passes</h3>
+          <p>Scheduled reasoning over your own notes — connect, drift,
+          emerge, ideas, challenge, ghost — never over Pebble's own
+          writeback.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section id="safety" class="section">
+    <div class="container">
+      <div class="section-head">
+        <h2>Safe by default</h2>
+        <p>Every outbound action passes through an autonomy layer.</p>
+      </div>
+      <div class="safety">
+
+        <div class="safety-card">
+          <h3>Tier-gated actions</h3>
+          <p>Every action is one of <strong>AUTO</strong>, <strong>NOTIFY</strong>,
+          or <strong>ASK</strong>. Send-email actions are ASK. Reading the
+          calendar is AUTO. You stay in control of what runs without
+          asking you.</p>
+        </div>
+
+        <div class="safety-card">
+          <h3>First-time approval</h3>
+          <p>The first invocation of <em>any</em> action — and the first
+          message to <em>any</em> new recipient — forces an approval
+          popup even if its declared tier is AUTO. No surprises.</p>
+        </div>
+
+        <div class="safety-card">
+          <h3>Dry-run during onboarding</h3>
+          <p>The setup wizard turns dry-run on by default. Every outbound
+          API call is logged as a preview file so you can read what Pebble
+          <em>would</em> have done before you trust it to send.</p>
+        </div>
+
+        <div class="safety-card">
+          <h3>Provenance on every write</h3>
+          <p>Notes Pebble writes to your vault carry a <code>source:&nbsp;pebble</code>
+          marker. Pebble's chokepoint refuses to overwrite content you
+          authored — your notes stay yours.</p>
+        </div>
+
+        <div class="safety-card">
+          <h3>Local-first by default</h3>
+          <p>You can run Pebble entirely on a local Ollama model with no
+          cloud calls. Cloud planners (Claude, GPT, Gemini) are opt-in via
+          the setup wizard.</p>
+        </div>
+
+        <div class="safety-card">
+          <h3>Full audit trail</h3>
+          <p>Every action Pebble takes is appended to
+          <code>~/.pebble/audit.jsonl</code>. Type <code>/how-am-i-doing</code>
+          in chat for a summary, or <code>/audit</code> for the raw rows.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <h2>Get started in three steps</h2>
+        <p>Roughly five minutes from download to a crab on your taskbar.</p>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <h3>Download</h3>
+          <p>Grab the v0.3.0 zip and extract it anywhere you like.</p>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <h3>Run the wizard</h3>
+          <p>Pick a model (cloud or local), optionally connect Gmail &amp;
+          Calendar, choose your vault.</p>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <h3>Start chatting</h3>
+          <p>Click the crab on your taskbar and type <code>/help</code> to
+          see what Pebble can do.</p>
+        </div>
+      </div>
+
+      <div class="cta-center">
+        <a class="btn btn-primary" href="setup.html">Read the full setup guide</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div>
+      <a href="https://github.com/SamEthanMathew/Pebble">GitHub</a>
+      <a href="https://github.com/SamEthanMathew/Pebble/blob/main/SECURITY.md">Security</a>
+      <a href="https://github.com/SamEthanMathew/Pebble/blob/main/ARCHITECTURE.md">Architecture</a>
+      <a href="setup.html">Setup</a>
+    </div>
+    <div>Made by Sam Mathew · v0.3.0</div>
+  </div>
+</footer>
+
+</body>
+</html>

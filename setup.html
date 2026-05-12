@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Setup guide — Pebble</title>
+  <meta name="description" content="Step-by-step setup for Pebble on Windows: download, first launch, connecting Gmail & Calendar, Obsidian vault, optional integrations.">
+  <meta name="theme-color" content="#0b1424">
+  <link rel="icon" href="favicon.ico">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="index.html" class="brand">
+      <img src="assets/logo.png" alt="Pebble">
+    </a>
+    <nav class="nav">
+      <a href="index.html#features">Features</a>
+      <a href="index.html#safety">Safety</a>
+      <a href="setup.html">Setup</a>
+      <a href="https://github.com/SamEthanMathew/Pebble">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="section">
+    <div class="container">
+
+      <div class="section-head">
+        <h2>Setup guide</h2>
+        <p>Five minutes from a fresh download to a working crab on your taskbar.</p>
+      </div>
+
+      <!-- ─── Step 1: Download ─── -->
+      <div class="guide-step">
+        <span class="step-tag">Step 1</span>
+        <h2>Download Pebble</h2>
+        <p>
+          Pebble ships as a Windows folder. Grab the latest release zip and
+          extract it anywhere — your Downloads folder is fine. Inside you'll
+          find <code>Pebble.exe</code> alongside its dependencies.
+        </p>
+        <p>
+          <a class="btn btn-primary"
+             href="https://github.com/SamEthanMathew/Pebble/releases/download/v0.3.0/Pebble-v0.3.0-windows.zip">
+            Download Pebble v0.3.0
+          </a>
+        </p>
+        <p style="margin-top:14px;font-size:0.92rem;color:var(--text-dim);">
+          SHA-256 of the zip:
+          <span class="hash" id="zip-sha">(printed in the v0.3.0 release notes)</span>
+        </p>
+      </div>
+
+      <!-- ─── Step 2: SmartScreen ─── -->
+      <div class="guide-step">
+        <span class="step-tag">Step 2</span>
+        <h2>First launch</h2>
+        <p>
+          Double-click <code>Pebble.exe</code>. Because v0.3.0 isn't yet
+          code-signed, Windows will pop up a SmartScreen warning the first
+          time:
+        </p>
+        <div class="callout">
+          <strong>Windows protected your PC</strong> — click
+          <strong>More info</strong>, then <strong>Run anyway</strong>.
+        </div>
+        <p>
+          This is expected for unsigned apps. v0.4 will ship signed, after
+          which this warning will go away.
+        </p>
+      </div>
+
+      <!-- ─── Step 3: Wizard ─── -->
+      <div class="guide-step">
+        <span class="step-tag">Step 3</span>
+        <h2>Setup wizard</h2>
+        <p>
+          A wizard launches the first time. It walks you through:
+        </p>
+        <ol>
+          <li><strong>Hardware scan</strong> — Pebble checks your CPU/RAM/GPU and recommends a local model size.</li>
+          <li><strong>Pick a model</strong> — choose any mix of local (Ollama) and cloud (Claude, GPT, Gemini). At least one is required.</li>
+          <li><strong>Connect Gmail &amp; Calendar (optional)</strong> — see Step 4 below.</li>
+          <li><strong>Done</strong> — the wizard closes, a crab appears on your taskbar.</li>
+        </ol>
+        <div class="callout info">
+          <strong>Dry-run is on by default.</strong> Every action Pebble
+          <em>would</em> take is logged to a preview file instead of firing
+          for real. Use <code>/review-drafts</code> in chat to inspect, and
+          <code>/dry-run off</code> in Settings when you trust it.
+        </div>
+      </div>
+
+      <!-- ─── Step 4: Google OAuth (BYOC) ─── -->
+      <div class="guide-step">
+        <span class="step-tag">Step 4</span>
+        <h2>Connect Gmail &amp; Calendar</h2>
+        <p>
+          Pebble doesn't ship with shared Google credentials — you bring
+          your own. The wizard's "Connect Gmail &amp; Calendar" step walks
+          you through five short Google Cloud Console steps:
+        </p>
+        <ol>
+          <li>Open
+            <a href="https://console.cloud.google.com/apis/credentials"
+               target="_blank" rel="noopener">Google Cloud Console</a>
+            and sign in.</li>
+          <li>Create or select a project, then enable the
+            <strong>Gmail API</strong> and <strong>Google Calendar API</strong>.</li>
+          <li>OAuth consent screen → <strong>External</strong> →
+            <strong>Testing</strong> is fine.</li>
+          <li>Credentials → Create credentials → OAuth client ID →
+            Application type: <strong>Desktop</strong>.</li>
+          <li>Download the JSON file Google gives you, then paste its
+            contents into the wizard's textarea and click
+            <strong>Save &amp; continue</strong>.</li>
+        </ol>
+        <p>
+          The pasted credentials are stored at
+          <code>~/.pebble/secrets/google_oauth.json</code> on your machine
+          and never leave it. You can also skip this step and come back to
+          it later from Settings — but Gmail/Calendar features won't work
+          until you do.
+        </p>
+        <div class="callout info">
+          <strong>Why BYOC?</strong> Pebble is open-source — bundling a
+          shared OAuth client means everyone's tokens trust a single secret
+          we'd need to rotate publicly. Bringing your own keeps the trust
+          boundary clean.
+        </div>
+      </div>
+
+      <!-- ─── Step 5: Obsidian + other integrations ─── -->
+      <div class="guide-step">
+        <span class="step-tag">Step 5</span>
+        <h2>Connect Obsidian and others</h2>
+        <p>
+          Pebble's persistent memory lives in your Obsidian vault. After
+          the wizard, type one of these in chat to connect more sources:
+        </p>
+        <ul class="cmd-list">
+          <li><code>/connect obsidian C:\path\to\Vault</code> — point Pebble at your Obsidian vault</li>
+          <li><code>/connect canvas &lt;base-url&gt; &lt;access-token&gt;</code> — Canvas LMS for course deadlines</li>
+          <li><code>/connect github &lt;pat&gt;</code> — GitHub PRs and issues</li>
+          <li><code>/connect spotify</code> — playback control via OAuth</li>
+          <li><code>/connect slack &lt;workspace&gt; &lt;token&gt;</code> — per-workspace Slack</li>
+          <li><code>/connect notion &lt;api-key&gt;</code> — Notion pages + databases</li>
+        </ul>
+        <p>
+          Each connection writes only to <code>~/.pebble/config.json</code>
+          on your machine. <code>/status</code> shows what's connected;
+          <code>/disconnect &lt;name&gt;</code> removes one.
+        </p>
+      </div>
+
+      <!-- ─── Step 6: Daily commands ─── -->
+      <div class="guide-step">
+        <span class="step-tag">Step 6</span>
+        <h2>Daily commands</h2>
+        <p>The slash commands you'll use most often:</p>
+        <ul class="cmd-list">
+          <li><code>/briefing</code> — generate a morning briefing (calendar + email + deadlines)</li>
+          <li><code>/wrapup</code> — evening reflection + tomorrow preview, appended to your daily note</li>
+          <li><code>/exam-prep &lt;course&gt; &lt;YYYY-MM-DD&gt;</code> — backward-from-deadline study plan</li>
+          <li><code>/review-drafts</code> — see what dry-run actions Pebble has prepared</li>
+          <li><code>/how-am-i-doing</code> — observability summary</li>
+          <li><code>/help</code> — full slash-command reference</li>
+        </ul>
+      </div>
+
+      <!-- ─── Troubleshooting ─── -->
+      <div class="guide-step">
+        <span class="step-tag">Troubleshooting</span>
+        <h2>If something doesn't work</h2>
+
+        <p><strong>SmartScreen blocks Pebble.exe on first launch.</strong>
+        Click <em>More info</em> then <em>Run anyway</em>. v0.3.0 is
+        unsigned; v0.4 will ship signed.</p>
+
+        <p><strong>The crab doesn't appear on the taskbar.</strong> The
+        wizard window might still be open behind another app — alt-tab to
+        find it. If it's truly gone, run <code>Pebble.exe</code> again;
+        the wizard skips if setup is complete.</p>
+
+        <p><strong>"OAuthNotConfigured" when I try /connect google.</strong>
+        You skipped the Google step in the wizard, or your
+        <code>~/.pebble/secrets/google_oauth.json</code> file is malformed.
+        Open Settings &rarr; Modules &rarr; Google to retry, or re-run the
+        wizard.</p>
+
+        <p><strong>No internet during model setup.</strong> The wizard
+        needs to either reach Anthropic/OpenAI/Gemini (to verify your API
+        key) or have an Ollama server already running locally. If you're
+        offline, skip cloud and install Ollama first.</p>
+
+        <p><strong>I want to report something else.</strong>
+        Open a GitHub issue at
+        <a href="https://github.com/SamEthanMathew/Pebble/issues" target="_blank" rel="noopener">github.com/SamEthanMathew/Pebble/issues</a>.
+        Attach the last 50 lines of <code>~/.pebble/errors/&lt;date&gt;.jsonl</code>
+        if there's a relevant error row.</p>
+
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div>
+      <a href="https://github.com/SamEthanMathew/Pebble">GitHub</a>
+      <a href="https://github.com/SamEthanMathew/Pebble/blob/main/SECURITY.md">Security</a>
+      <a href="https://github.com/SamEthanMathew/Pebble/blob/main/ARCHITECTURE.md">Architecture</a>
+      <a href="index.html">Home</a>
+    </div>
+    <div>Made by Sam Mathew · v0.3.0</div>
+  </div>
+</footer>
+
+</body>
+</html>
