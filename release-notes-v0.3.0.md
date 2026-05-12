@@ -6,10 +6,13 @@ cloning the source.
 
 ## Download
 
-`Pebble-v0.3.0-windows.zip` — Windows 10 / 11. Extract anywhere and run
-`Pebble.exe`. **Pebble is not yet code-signed**, so Windows will show a
-SmartScreen warning the first time you launch it. Click **More info** →
-**Run anyway**. v0.4 will ship signed.
+`Pebble-v0.3.0-windows.zip` — Windows 10 / 11, 63 MB.
+
+SHA-256: `9ba4d8777c6449e9028e1ad93bca1845c5ad4a2bd24d86f0bbb51dafaae105ee`
+
+Extract anywhere and run `Pebble.exe`. **Pebble is not yet code-signed**,
+so Windows will show a SmartScreen warning the first time you launch it.
+Click **More info** → **Run anyway**. v0.4 will ship signed.
 
 The setup wizard runs automatically on first launch — it picks a model,
 connects Gmail / Calendar / Obsidian, and finishes with the crab pet on
