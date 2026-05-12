@@ -2,14 +2,17 @@
 
 A personal AI assistant that lives on your Windows taskbar as a pixel-art crab.
 
+🌐 **Website + downloads:** <https://samethanmathew.github.io/Pebble/>
+
 Pebble runs locally on your machine, reads your calendar / email / class
 schedule, and proposes actions (briefings, reminders, study plans, draft
 replies). Every outbound action is gated through an autonomy layer with
 first-time approval, so Pebble never silently sends an email or creates a
 calendar event you didn't expect.
 
-**Status:** v0.3.0 — feature-complete for single-user daily use. Not yet
-distributed as a signed Windows installer.
+**Status:** v0.3.0 — feature-complete for single-user daily use. Distributed
+as an unsigned Windows folder (SmartScreen workaround required on first
+launch); v0.4 will ship signed.
 
 ## What Pebble can do
 
