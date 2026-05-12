@@ -19,6 +19,7 @@
     </a>
     <nav class="nav">
       <a href="index.html#features">Features</a>
+      <a href="index.html#integrations">Integrations</a>
       <a href="index.html#safety">Safety</a>
       <a href="setup.html">Setup</a>
       <a href="https://github.com/SamEthanMathew/Pebble">GitHub</a>
@@ -62,17 +63,16 @@
         <span class="step-tag">Step 2</span>
         <h2>First launch</h2>
         <p>
-          Double-click <code>Pebble.exe</code>. Because v0.3.0 isn't yet
-          code-signed, Windows will pop up a SmartScreen warning the first
-          time:
+          Double-click <code>Pebble.exe</code>. The first time, Windows will
+          ask before running an unsigned app:
         </p>
         <div class="callout">
           <strong>Windows protected your PC</strong> — click
-          <strong>More info</strong>, then <strong>Run anyway</strong>.
+          <strong>More info</strong> → <strong>Run anyway</strong>.
         </div>
         <p>
-          This is expected for unsigned apps. v0.4 will ship signed, after
-          which this warning will go away.
+          Windows asks first because we haven't paid Microsoft for code
+          signing yet. v0.4 will ship signed.
         </p>
       </div>
 
@@ -123,10 +123,10 @@
         </ol>
         <p>
           The pasted credentials are stored at
-          <code>~/.pebble/secrets/google_oauth.json</code> on your machine
-          and never leave it. You can also skip this step and come back to
-          it later from Settings — but Gmail/Calendar features won't work
-          until you do.
+          <code>~/.pebble/secrets/google_oauth.json</code> on your machine.
+          That folder is gitignored, never synced, and never sent off-device.
+          You can also skip this step and come back to it later from Settings
+          — but Gmail/Calendar features won't work until you do.
         </p>
         <div class="callout info">
           <strong>Why BYOC?</strong> Pebble is open-source — bundling a
@@ -137,21 +137,30 @@
       </div>
 
       <!-- ─── Step 5: Obsidian + other integrations ─── -->
-      <div class="guide-step">
+      <div id="integrations-all" class="guide-step">
         <span class="step-tag">Step 5</span>
         <h2>Connect Obsidian and others</h2>
         <p>
-          Pebble's persistent memory lives in your Obsidian vault. After
-          the wizard, type one of these in chat to connect more sources:
+          Pebble's persistent memory lives in your Obsidian vault. After the
+          wizard, type one of these in chat to connect each source:
         </p>
         <ul class="cmd-list">
-          <li><code>/connect obsidian C:\path\to\Vault</code> — point Pebble at your Obsidian vault</li>
-          <li><code>/connect canvas &lt;base-url&gt; &lt;access-token&gt;</code> — Canvas LMS for course deadlines</li>
-          <li><code>/connect github &lt;pat&gt;</code> — GitHub PRs and issues</li>
+          <li><code>/connect obsidian C:\path\to\Vault</code> — your Obsidian vault (the knowledge store)</li>
+          <li><code>/connect canvas &lt;base-url&gt; &lt;access-token&gt;</code> — Canvas LMS for course deadlines, announcements, assignments</li>
+          <li><code>/connect github &lt;pat&gt;</code> — GitHub PRs, issues, notifications</li>
           <li><code>/connect spotify</code> — playback control via OAuth</li>
-          <li><code>/connect slack &lt;workspace&gt; &lt;token&gt;</code> — per-workspace Slack</li>
+          <li><code>/connect slack &lt;workspace&gt; &lt;token&gt;</code> — per-workspace Slack; watch specific channels</li>
           <li><code>/connect notion &lt;api-key&gt;</code> — Notion pages + databases</li>
+          <li><code>/connect discord &lt;token&gt;</code> — recent messages + channel watching</li>
+          <li><code>/connect todoist &lt;api-token&gt;</code> — task list mirror</li>
         </ul>
+        <p>
+          Plus built-in integrations that need no setup: weather, news feeds,
+          file search, screenshots, focus timer, reminders, journal,
+          clipboard read, system context, and Brave Search (if you set a
+          Brave API key in Settings). Crypto (CoinGecko), Alpaca, and Kalshi
+          modules are available for users with those accounts.
+        </p>
         <p>
           Each connection writes only to <code>~/.pebble/config.json</code>
           on your machine. <code>/status</code> shows what's connected;
@@ -180,8 +189,8 @@
         <h2>If something doesn't work</h2>
 
         <p><strong>SmartScreen blocks Pebble.exe on first launch.</strong>
-        Click <em>More info</em> then <em>Run anyway</em>. v0.3.0 is
-        unsigned; v0.4 will ship signed.</p>
+        Click <em>More info</em> → <em>Run anyway</em>. v0.3.0 is unsigned;
+        v0.4 will ship signed.</p>
 
         <p><strong>The crab doesn't appear on the taskbar.</strong> The
         wizard window might still be open behind another app — alt-tab to
