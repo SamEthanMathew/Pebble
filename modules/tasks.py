@@ -3,11 +3,11 @@
 from __future__ import annotations
 import json
 from datetime import date, timedelta
-from pathlib import Path
 
 from .base import ActionTier, PebbleModule
+import paths
 
-_TASKS_PATH = Path.home() / '.pebble' / 'tasks.json'
+_TASKS_PATH = paths.data_dir() / 'tasks.json'
 
 
 class TaskModule(PebbleModule):

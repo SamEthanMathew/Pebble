@@ -28,6 +28,8 @@ except ImportError:
 
 from rapidfuzz import fuzz, process
 
+import paths
+
 from .note import Note
 from .vault import Vault
 
@@ -115,7 +117,7 @@ class EntityResolver:
         self._fuzzy_threshold           = fuzzy_threshold
         self._stub_confidence_threshold = stub_confidence_threshold
         self._aliases_path              = aliases_path or (
-            Path.home() / '.pebble' / 'workspace' / 'aliases.yml'
+            paths.workspace_dir() / 'aliases.yml'
         )
 
     # ── alias table ─────────────────────────────────────────────────────────

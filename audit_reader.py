@@ -16,8 +16,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
-_AUDIT_PATH   = Path.home() / '.pebble' / 'audit.jsonl'
-_METRICS_PATH = Path.home() / '.pebble' / 'metrics.jsonl'
+import paths
+
+_AUDIT_PATH   = paths.data_dir() / 'audit.jsonl'
+_METRICS_PATH = paths.data_dir() / 'metrics.jsonl'
 
 
 def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:

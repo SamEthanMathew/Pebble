@@ -14,17 +14,17 @@ from __future__ import annotations
 import datetime
 import json
 import re
-from pathlib import Path
 from typing import Any
 
 import audit
 import entity_store
+import paths
 import prompts as prompt_lib
 from atomic_io import read_json, write_json
 from planners.base import BasePlanner
 
 # Newsletter set learned over time. Persisted at ~/.pebble/comms_newsletters.json.
-_NEWSLETTERS_PATH = Path.home() / '.pebble' / 'comms_newsletters.json'
+_NEWSLETTERS_PATH = paths.data_dir() / 'comms_newsletters.json'
 
 # Domains we treat as "likely-important unknown" by default.
 KNOWN_IMPORTANT_DOMAINS = {

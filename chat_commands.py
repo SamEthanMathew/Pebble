@@ -16,6 +16,8 @@ import shlex
 from dataclasses import dataclass
 from typing import Callable
 
+import paths
+
 # Sentinel: caller should run `fn()` off the UI thread and display the result.
 @dataclass
 class AsyncCommand:
@@ -104,8 +106,7 @@ def _disable_module(name: str) -> None:
 
 
 def _google_token_path():
-    from pathlib import Path
-    return Path.home() / '.pebble' / 'google_token.json'
+    return paths.data_dir() / 'google_token.json'
 
 
 def _run_module_action(module_name: str, action: str,

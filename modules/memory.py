@@ -36,15 +36,15 @@ from __future__ import annotations
 import datetime
 import re
 import sys
-from pathlib import Path
 from typing import Any
 
 from .base import PebbleModule, ActionTier
+import paths
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_LEGACY_MEMORY_PATH = Path.home() / '.pebble' / 'memory.json'
+_LEGACY_MEMORY_PATH = paths.data_dir() / 'memory.json'
 _DEFAULT_TOP_N      = 8
 
 

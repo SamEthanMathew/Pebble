@@ -43,6 +43,12 @@ def errors_dir() -> Path:
     return data_dir() / 'errors'
 
 
+def workspace_dir() -> Path:
+    """Vault-adjacent working area — aliases, proposals, migration reports,
+    write log, tmp (~/.pebble/workspace)."""
+    return data_dir() / 'workspace'
+
+
 def config_path() -> Path:
     """Top-level config.json."""
     return data_dir() / 'config.json'

@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Any
 
 import audit
+import paths
 
-_DB_PATH = Path.home() / '.pebble' / 'entities.db'
+_DB_PATH = paths.data_dir() / 'entities.db'
 
 ENTITY_TYPES = ('course', 'person', 'project', 'recurring', 'account')
 

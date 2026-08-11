@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Any
 
 import audit_reader
+import paths
 
-_FEEDBACK_DIR = Path.home() / '.pebble' / 'feedback'
+_FEEDBACK_DIR = paths.data_dir() / 'feedback'
 _SUGGESTIONS_PATH = _FEEDBACK_DIR / 'prompt_suggestions.jsonl'
 
 

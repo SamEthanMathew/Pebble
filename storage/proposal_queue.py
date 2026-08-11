@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import paths
+
 
 Status = str  # 'pending' | 'accepted' | 'dismissed' | 'postponed'
 
@@ -60,7 +62,7 @@ class ProposalQueue:
 
     def __init__(self, path: Path | str | None = None):
         if path is None:
-            path = Path.home() / '.pebble' / 'workspace' / 'proposals.jsonl'
+            path = paths.workspace_dir() / 'proposals.jsonl'
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()

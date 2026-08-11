@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 from .base import ActionTier, PebbleModule
+import paths
 
-_STATE_PATH = Path.home() / '.pebble' / 'focus_state.json'
+_STATE_PATH = paths.data_dir() / 'focus_state.json'
 
 _DEFAULT_STATE: dict = {
     'active':             False,

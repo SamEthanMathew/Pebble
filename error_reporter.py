@@ -19,7 +19,9 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-_ERRORS_DIR = Path.home() / '.pebble' / 'errors'
+import paths
+
+_ERRORS_DIR = paths.errors_dir()
 _INSTALLED = False
 _LOCK = threading.Lock()
 

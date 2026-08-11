@@ -35,4 +35,5 @@ def test_subdir_helpers_live_under_data_dir(monkeypatch, tmp_path):
     assert paths.state_dir() == base / 'state'
     assert paths.secrets_dir() == base / 'secrets'
     assert paths.errors_dir() == base / 'errors'
+    assert paths.workspace_dir() == base / 'workspace'
     assert paths.config_path() == base / 'config.json'

@@ -18,11 +18,12 @@ from pathlib import Path
 import audit
 import audit_reader
 import metrics
+import paths
 import prompts as prompt_lib
 from planners.base import read_state_doc
 
-_TASKS_PATH = Path.home() / '.pebble' / 'tasks.json'
-_JOURNAL_DIR = Path.home() / '.pebble' / 'journal'
+_TASKS_PATH = paths.data_dir() / 'tasks.json'
+_JOURNAL_DIR = paths.data_dir() / 'journal'
 
 
 def _planner_backend():

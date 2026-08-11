@@ -17,6 +17,7 @@ from datetime import date
 from typing import Any, Callable
 import tkinter as tk
 
+import paths
 from events import (
     bus,
     CALENDAR_EVENT_APPROACHING,
@@ -200,9 +201,8 @@ class ProactiveEngine:
     def _check_tasks(self):
         import json
         import datetime as dt
-        from pathlib import Path
 
-        tasks_path = Path.home() / '.pebble' / 'tasks.json'
+        tasks_path = paths.data_dir() / 'tasks.json'
         if not tasks_path.exists():
             return
 
@@ -280,8 +280,7 @@ class ProactiveEngine:
             return
 
         # Check if today's journal already exists
-        from pathlib import Path
-        journal_path = Path.home() / '.pebble' / 'journal' / f'{today.isoformat()}.md'
+        journal_path = paths.data_dir() / 'journal' / f'{today.isoformat()}.md'
         if journal_path.exists():
             self._morning_briefing_done_date = today
             return
@@ -324,8 +323,7 @@ class ProactiveEngine:
                 bus.publish(REMINDER_DUE, {'reminder': r})
                 # Mark done immediately to avoid repeat
                 import json
-                from pathlib import Path
-                path = Path.home() / '.pebble' / 'reminders.json'
+                path = paths.data_dir() / 'reminders.json'
                 reminders = json.loads(path.read_text(encoding='utf-8'))
                 for rem in reminders:
                     if rem.get('id') == r.get('id'):

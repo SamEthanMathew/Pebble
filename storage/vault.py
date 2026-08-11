@@ -29,6 +29,8 @@ from typing import Any, Iterable, Literal
 
 import frontmatter as fm_lib  # python-frontmatter
 
+import paths
+
 from .note import Note, parse_note, iter_md_files
 from .provenance import (
     assert_preserves_provenance,
@@ -416,7 +418,7 @@ class Vault:
     @property
     def _workspace_dir(self) -> Path:
         """~/.pebble/workspace/ — operational state for the storage layer."""
-        d = Path.home() / '.pebble' / 'workspace'
+        d = paths.workspace_dir()
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -461,7 +463,7 @@ class Vault:
         directory so they don't pollute Obsidian when a write fails to replace.
         """
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp_dir = Path.home() / '.pebble' / 'workspace' / 'tmp'
+        tmp_dir = paths.workspace_dir() / 'tmp'
         tmp_dir.mkdir(parents=True, exist_ok=True)
         # Fall back to target dir if cross-volume replace would fail
         try:

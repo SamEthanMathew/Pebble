@@ -14,9 +14,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import paths
 from atomic_io import write_json
 
-_CACHE_DIR = Path.home() / '.pebble' / 'cache'
+_CACHE_DIR = paths.data_dir() / 'cache'
 DEFAULT_TTL_HOURS = 24
 DEFAULT_SOURCE_TTLS = {
     'syllabus': 168,   # 7 days

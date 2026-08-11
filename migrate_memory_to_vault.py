@@ -31,10 +31,12 @@ import re
 import sys
 from pathlib import Path
 
+import paths
 
-_MEMORY_PATH        = Path.home() / '.pebble' / 'memory.json'
-_BACKUP_PATH        = Path.home() / '.pebble' / 'memory.json.bak'
-_REPORT_PATH        = Path.home() / '.pebble' / 'workspace' / 'migration_report.md'
+
+_MEMORY_PATH        = paths.data_dir() / 'memory.json'
+_BACKUP_PATH        = paths.data_dir() / 'memory.json.bak'
+_REPORT_PATH        = paths.workspace_dir() / 'migration_report.md'
 
 # folder, single_note_per_entry
 _CATEGORY_ROUTING: dict[str, str] = {
