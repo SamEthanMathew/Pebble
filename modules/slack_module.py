@@ -6,6 +6,7 @@ import datetime
 
 import requests
 
+import health
 from .base import ActionTier, PebbleModule
 
 _API_BASE = 'https://slack.com/api'
@@ -447,25 +448,35 @@ class SlackWatcherThread:
         first_run = True
         # First poll fires immediately; subsequent ones every POLL_INTERVAL_SECONDS
         while not self._stop_event.wait(timeout=0 if first_run else self.POLL_INTERVAL_SECONDS):
-            try:
-                self._tick(first_run=first_run)
-            except Exception:
-                # Swallow — never crash silently mid-session
-                pass
+            self._poll_once(first_run=first_run)
             first_run = False
 
+    def _poll_once(self, *, first_run: bool) -> None:
+        """One poll cycle. beat() on success, record_error() on failure (keyed per
+        workspace) so a revoked token surfaces in /health instead of being masked
+        as 'no new messages'. Never raises — the watcher thread cannot die here."""
+        src = f'slack:{self._workspace_label}' if self._workspace_label else 'slack'
+        try:
+            self._tick(first_run=first_run)
+            health.beat(src)
+        except Exception as e:
+            health.record_error(src, e)
+
     def _tick(self, *, first_run: bool) -> None:
-        # Resolve channel name → ID once (cache thereafter)
+        # Resolve channel name → ID once (cache thereafter). _resolve raises on an
+        # auth/API failure so a bad token surfaces at the resolve step.
         if not self._channel_ids:
             self._resolve_channel_ids()
             if not self._channel_ids:
                 return
 
+        failures = 0
         for channel_name, channel_id in self._channel_ids.items():
             try:
                 new_msgs = self._fetch_new_messages(channel_id)
             except Exception:
-                continue
+                failures += 1
+                continue  # one flaky/inaccessible channel shouldn't stop the rest
             if not new_msgs:
                 continue
             # Update last_seen to the most-recent message
@@ -482,24 +493,34 @@ class SlackWatcherThread:
                 except Exception:
                     pass
 
+        # Systemic failure (e.g. token revoked AFTER channels were resolved and
+        # cached): every channel failed to fetch. Surface it rather than beating
+        # healthy, and drop the cache so the next tick re-resolves.
+        if self._channel_ids and failures == len(self._channel_ids):
+            self._channel_ids = {}
+            raise RuntimeError(f'all {failures} Slack channel(s) failed to fetch (auth/API?)')
+
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _headers(self) -> dict:
         return {'Authorization': f'Bearer {self._token}'}
 
     def _resolve_channel_ids(self) -> None:
-        """Map each watched channel name to its ID via conversations.list."""
-        try:
-            r = requests.get(f'{self.SLACK_API_BASE}/conversations.list',
-                              headers=self._headers(),
-                              params={'limit': 1000,
-                                      'types': 'public_channel,private_channel,mpim,im'},
-                              timeout=15)
-            data = r.json() if r.status_code == 200 else {}
-        except Exception:
-            return
+        """Map each watched channel name to its ID via conversations.list.
+
+        Raises on a transport error or a Slack API error (e.g. invalid_auth) so a
+        bad/revoked token is recorded by /health instead of silently resolving to
+        no channels (which read as 'nothing to watch')."""
+        r = requests.get(f'{self.SLACK_API_BASE}/conversations.list',
+                          headers=self._headers(),
+                          params={'limit': 1000,
+                                  'types': 'public_channel,private_channel,mpim,im'},
+                          timeout=15)
+        data = r.json() if r.status_code == 200 else {}
         if not data.get('ok'):
-            return
+            raise RuntimeError(
+                f"Slack conversations.list failed: "
+                f"{data.get('error') or ('HTTP ' + str(r.status_code))}")
         wanted = {c.lower() for c in self._channels_raw}
         for ch in data.get('channels', []):
             name = (ch.get('name') or '').lower()
@@ -515,10 +536,10 @@ class SlackWatcherThread:
         r = requests.get(f'{self.SLACK_API_BASE}/conversations.history',
                           headers=self._headers(), params=params, timeout=15)
         if r.status_code != 200:
-            return []
+            raise RuntimeError(f'Slack conversations.history HTTP {r.status_code}')
         data = r.json()
         if not data.get('ok'):
-            return []
+            raise RuntimeError(f"Slack conversations.history failed: {data.get('error')}")
         msgs = data.get('messages', []) or []
         # Slack returns most-recent first; drop the boundary message if oldest was inclusive
         if oldest:

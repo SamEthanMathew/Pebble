@@ -54,3 +54,50 @@ def test_failing_calendar_check_surfaces_as_error(pebble_home, monkeypatch):
     row = health.snapshot()['calendar']
     assert row['errors'] == 1
     assert row.get('beats', 0) == 0
+
+
+def test_failing_reminders_check_surfaces_as_error(pebble_home, monkeypatch):
+    import health
+    import modules.reminders as rm
+
+    def _boom():
+        raise RuntimeError('reminders store unreadable')
+
+    monkeypatch.setattr(rm, 'get_due_reminders', _boom)
+    eng = _engine()
+    eng._run_check('reminders', eng._check_reminders)
+    row = health.snapshot()['reminders']
+    assert row['errors'] == 1
+    assert row.get('beats', 0) == 0
+
+
+def test_failing_focus_check_surfaces_as_error(pebble_home, monkeypatch):
+    import health
+    import modules.focus_timer as ft
+
+    def _boom():
+        raise RuntimeError('focus state corrupt')
+
+    monkeypatch.setattr(ft, 'get_focus_state', _boom)
+    eng = _engine()
+    eng._run_check('focus', eng._check_focus)
+    row = health.snapshot()['focus']
+    assert row['errors'] == 1
+    assert row.get('beats', 0) == 0
+
+
+def test_failing_meeting_prep_check_surfaces_as_error(pebble_home, monkeypatch):
+    import health
+    import modules.google_auth as ga
+
+    monkeypatch.setattr(ga, 'is_google_connected', lambda: True)
+
+    def _boom(*a, **k):
+        raise RuntimeError('calendar api down')
+
+    monkeypatch.setattr(ga, 'GoogleServices', _boom)
+    eng = _engine()
+    eng._run_check('meeting_prep', eng._check_meeting_prep)
+    row = health.snapshot()['meeting_prep']
+    assert row['errors'] == 1
+    assert row.get('beats', 0) == 0
