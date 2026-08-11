@@ -80,9 +80,6 @@ class ToolOrchestrator:
         if not mod:
             return f'Unknown tool: {name!r}'
 
-        # Tier-aware chat-path safety: audit every NOTIFY/ASK tool call so
-        # prompt-injection-driven outbound writes are visible after the fact,
-        # and block ASK actions when no approval handler is wired.
         action_name = str(args.get('action') or '')
         try:
             from modules.base import ActionTier
@@ -90,26 +87,64 @@ class ToolOrchestrator:
         except Exception:
             tier = None
 
-        if tier is not None and tier.value in ('notify', 'ask'):
+        # AUTO / read-only tools run directly — fast path, no side effects.
+        if tier is None or tier == ActionTier.AUTO:
             try:
-                import audit
-                audit.append({
-                    'module':  name, 'action': action_name,
-                    'args':    args, 'tier': tier.value,
-                    'source':  'chat',
-                })
-            except Exception:
-                pass
+                return mod.execute(**args)
+            except Exception as exc:
+                return f'Tool error: {exc}'
 
-        if tier is not None and tier.value == 'ask':
+        # Write-tier (NOTIFY / ASK) — funnel through the autonomy chokepoint so
+        # dry-run, the first-time ledger, and the audit log ALL apply. Chat cannot
+        # bypass them: a prompt-injected write from scraped/email content is gated
+        # exactly like a planner proposal. Chat auto-approves NOTIFY (quick, but
+        # audited + dry-run-safe) and always refuses ASK (needs real approval).
+        return self._route_write(mod, name, action_name, args)
+
+    def _route_write(self, mod, name: str, action_name: str, args: dict) -> str:
+        from modules.base import ActionTier
+        try:
+            from autonomy import Autonomy
+            from planners.base import Proposal
+        except Exception:
+            # Autonomy layer unavailable → fail safe: never fire an unreviewed write.
             return (f'Refusing to run {name}.{action_name} from chat: '
-                    'this action requires explicit approval. Use the autonomy '
-                    'layer (planner → proposal) instead.')
+                    'the autonomy layer is unavailable.')
 
         try:
-            return mod.execute(**args)
-        except Exception as exc:
-            return f'Tool error: {exc}'
+            target_id = mod.outbound_target_id(action_name, args)
+        except Exception:
+            target_id = None
+
+        proposal = Proposal(
+            module=name, action=action_name, args=dict(args),
+            source='chat', target_id=target_id,
+            rationale=f'chat tool call: {name}.{action_name}',
+        )
+
+        def _chat_approval(p: 'Proposal') -> bool:
+            # Chat may auto-run NOTIFY; ASK-tier always requires explicit approval.
+            try:
+                return mod.action_tier(p.action) == ActionTier.NOTIFY
+            except Exception:
+                return False
+
+        autonomy = Autonomy(approval_handler=_chat_approval,
+                            modules=list(self.modules.values()))
+        res = autonomy.route(proposal)
+
+        if res.status in ('executed_auto', 'executed_notify', 'executed_ask'):
+            return str(res.result) if res.result is not None else ''
+        if res.status == 'dry_run':
+            return f'[dry-run] {name}.{action_name} preview written — not executed.'
+        if res.status == 'denied':
+            return (f'Refusing to run {name}.{action_name} from chat: '
+                    'this action requires explicit approval via the autonomy layer.')
+        if res.status == 'awaits_approval':
+            return f'{name}.{action_name} has been queued for your approval.'
+        if res.status == 'error':
+            return f'Tool error: {res.error}'
+        return str(res.result) if res.result is not None else ''
 
     # ── native path ────────────────────────────────────────────────────────────
 

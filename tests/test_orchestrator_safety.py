@@ -54,8 +54,12 @@ def test_ask_tier_chat_call_is_refused(pebble_home):
 def test_notify_tier_chat_call_is_audited(pebble_home):
     """NOTIFY-tier actions execute but are audit-logged with source=chat."""
     import audit
+    import first_time_ledger as ledger
     from modules.base import ActionTier
     mod = _make_module('todo', {'add': ActionTier.NOTIFY})
+    # Pre-record the first-time key so this exercises the steady-state NOTIFY path;
+    # first-time gating (-> ASK) is covered by the autonomy tests.
+    ledger.record(ledger.make_key('todo', 'add'))
     o = _orchestrator_with(mod)
     o._run('todo', {'action': 'add', 'text': 'buy milk'})
     rows = audit.tail(20)
@@ -64,6 +68,43 @@ def test_notify_tier_chat_call_is_audited(pebble_home):
     assert chat_rows, 'NOTIFY-tier chat call should write an audit row'
     assert chat_rows[-1]['tier'] == 'notify'
     assert mod.calls == [{'action': 'add', 'kwargs': {'text': 'buy milk'}}]
+
+
+def test_dry_run_blocks_chat_notify_write(pebble_home):
+    """In dry-run mode a chat NOTIFY write must NOT reach the live module.
+
+    Regression guard for the chat->autonomy bypass (P0-4): _run must route
+    write-tier calls through Autonomy.route(), which honours dry_run.is_enabled().
+    Before the fix, _run called mod.execute() directly, so a chat-driven (or
+    prompt-injected) NOTIFY write fired for real even with dry-run ON.
+    """
+    import dry_run
+    from modules.base import ActionTier
+    dry_run.set_enabled(True)
+    try:
+        mod = _make_module('todo', {'add': ActionTier.NOTIFY})
+        o = _orchestrator_with(mod)
+        result = o._run('todo', {'action': 'add', 'text': 'buy milk'})
+        assert mod.calls == []                 # live module NEVER executed under dry-run
+        assert 'dry-run' in result.lower()
+    finally:
+        dry_run.set_enabled(False)
+
+
+def test_first_time_notify_is_gated_then_runs_from_chat(pebble_home):
+    """A first-ever NOTIFY chat write is first-time-gated (audited as ask) but
+    still executes (chat auto-approves NOTIFY) — and the ledger records it."""
+    import audit
+    import first_time_ledger as ledger
+    from modules.base import ActionTier
+    mod = _make_module('journal', {'append': ActionTier.NOTIFY})
+    assert ledger.is_first_time(ledger.make_key('journal', 'append'))
+    o = _orchestrator_with(mod)
+    o._run('journal', {'action': 'append', 'text': 'note'})
+    assert mod.calls == [{'action': 'append', 'kwargs': {'text': 'note'}}]
+    assert not ledger.is_first_time(ledger.make_key('journal', 'append'))
+    row = [r for r in audit.tail(20) if r.get('source') == 'chat'][-1]
+    assert row['tier'] == 'ask' and row['was_first_time'] is True
 
 
 def test_auto_tier_chat_call_is_not_audited(pebble_home):
