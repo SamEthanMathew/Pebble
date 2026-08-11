@@ -21,11 +21,11 @@ Schema:
 
 from __future__ import annotations
 import json
-from pathlib import Path
 
 import atomic_io
+import paths
 
-_CONFIG_PATH = Path.home() / '.pebble' / 'config.json'
+_CONFIG_PATH = paths.config_path()
 
 
 def _load() -> dict:
