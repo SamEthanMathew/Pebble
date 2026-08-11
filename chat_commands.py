@@ -51,6 +51,7 @@ HELP_TEXT = """**Commands**
 - `/how-am-i-doing [--days=N]` — observability summary
 - `/audit [N]` — last N audit rows (default 20)
 - `/errors [N]` — last N error rows (default 10)
+- `/health` — background watcher/loop heartbeats + last errors
 - `/review-drafts` — list dry-run previews
 - `/review-drafts --clear` — delete all dry-run previews
 
@@ -772,6 +773,31 @@ def handle(text: str) -> str | AsyncCommand | None:
         for r in rows:
             ts = (r.get('timestamp') or '?')[:19]
             lines.append(f'- `{ts}` **{r.get("error_type")}**: {r.get("message", "")[:100]}')
+        return '\n'.join(lines)
+
+    if cmd == '/health':
+        import health
+        snap = health.snapshot()
+        if not snap:
+            return '_No background loops have reported yet._'
+        lines = ['**Background loop health**', '']
+        for name in sorted(snap):
+            row = snap[name]
+            beats = int(row.get('beats', 0))
+            errors = int(row.get('errors', 0))
+            if errors and not beats:
+                status = '🔴'
+            elif errors:
+                status = '🟡'
+            elif beats:
+                status = '🟢'
+            else:
+                status = '⚪'
+            line = f'- {status} **{name}** — {beats} beat(s), last `{row.get("last_beat", "—")}`'
+            if errors:
+                line += (f' · ⚠️ {errors} error(s): '
+                         f'{row.get("last_error_type", "")}: {str(row.get("last_error", ""))[:60]}')
+            lines.append(line)
         return '\n'.join(lines)
 
     if cmd == '/add-course':

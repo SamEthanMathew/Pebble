@@ -17,6 +17,7 @@ from datetime import date
 from typing import Any, Callable
 import tkinter as tk
 
+import health
 import paths
 from events import (
     bus,
@@ -103,8 +104,9 @@ class ProactiveEngine:
         while not self._stop.is_set():
             try:
                 self._check_calendar()
-            except Exception:
-                pass
+                health.beat('calendar')
+            except Exception as e:
+                health.record_error('calendar', e)
             self._stop.wait(timeout=300)  # re-check every 5 minutes
 
     def _check_calendar(self):
@@ -194,8 +196,9 @@ class ProactiveEngine:
         while not self._stop.is_set():
             try:
                 self._check_tasks()
-            except Exception:
-                pass
+                health.beat('tasks')
+            except Exception as e:
+                health.record_error('tasks', e)
             self._stop.wait(timeout=3600)  # re-check every hour
 
     def _check_tasks(self):
@@ -262,8 +265,9 @@ class ProactiveEngine:
         while not self._stop.is_set():
             try:
                 self._check_morning_briefing()
-            except Exception:
-                pass
+                health.beat('morning')
+            except Exception as e:
+                health.record_error('morning', e)
             self._stop.wait(timeout=600)  # re-check every 10 minutes
 
     def _check_morning_briefing(self):
@@ -311,8 +315,9 @@ class ProactiveEngine:
         while not self._stop.is_set():
             try:
                 self._check_reminders()
-            except Exception:
-                pass
+                health.beat('reminders')
+            except Exception as e:
+                health.record_error('reminders', e)
             self._stop.wait(timeout=60)  # check every minute
 
     def _check_reminders(self):
@@ -356,8 +361,9 @@ class ProactiveEngine:
         while not self._stop.is_set():
             try:
                 self._check_focus()
-            except Exception:
-                pass
+                health.beat('focus')
+            except Exception as e:
+                health.record_error('focus', e)
             self._stop.wait(timeout=60)
 
     def _check_focus(self):
@@ -438,8 +444,9 @@ class ProactiveEngine:
         while not self._stop.is_set():
             try:
                 self._check_meeting_prep()
-            except Exception:
-                pass
+                health.beat('meeting_prep')
+            except Exception as e:
+                health.record_error('meeting_prep', e)
             self._stop.wait(timeout=120)  # check every 2 minutes
 
     def _check_meeting_prep(self):
