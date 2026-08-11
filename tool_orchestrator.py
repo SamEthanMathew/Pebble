@@ -83,7 +83,15 @@ class ToolOrchestrator:
         action_name = str(args.get('action') or '')
         try:
             from modules.base import ActionTier
-            tier = mod.action_tier(action_name) if action_name else ActionTier.AUTO
+            if action_name:
+                tier = mod.action_tier(action_name)
+            else:
+                # No 'action' arg. Single-endpoint write tools (e.g. take_screenshot
+                # = NOTIFY, whose schema has no 'action' key) must NOT be treated as
+                # AUTO — that would let a prompt-injected call execute raw, skipping
+                # dry-run + audit. Resolve the strictest declared tier and adopt its
+                # action key so autonomy re-resolves the same tier.
+                action_name, tier = self._actionless_tier(mod)
         except Exception:
             tier = None
 
@@ -100,6 +108,21 @@ class ToolOrchestrator:
         # exactly like a planner proposal. Chat auto-approves NOTIFY (quick, but
         # audited + dry-run-safe) and always refuses ASK (needs real approval).
         return self._route_write(mod, name, action_name, args)
+
+    @staticmethod
+    def _actionless_tier(mod):
+        """Resolve (action_name, tier) for a tool call that carried no 'action'
+        arg. Returns the module's strictest declared tier (ASK > NOTIFY > AUTO)
+        and the action key that carries it, so a single-endpoint write tool is
+        funnelled through autonomy instead of defaulting to AUTO. Modules with no
+        declared tiers stay AUTO (read-only)."""
+        from modules.base import ActionTier
+        declared = getattr(mod, '_default_tiers', {}) or {}
+        if not declared:
+            return '', ActionTier.AUTO
+        order = {ActionTier.AUTO: 0, ActionTier.NOTIFY: 1, ActionTier.ASK: 2}
+        strict_key = max(declared, key=lambda k: order.get(declared[k], 2))
+        return strict_key, declared[strict_key]
 
     def _route_write(self, mod, name: str, action_name: str, args: dict) -> str:
         from modules.base import ActionTier

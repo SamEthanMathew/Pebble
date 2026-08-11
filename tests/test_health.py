@@ -56,6 +56,21 @@ def test_persisted_across_module_reload(pebble_home):
     assert row['errors'] == 1
 
 
+def test_beat_and_record_error_never_raise_on_write_failure(pebble_home, monkeypatch):
+    """health writes are best-effort: an IO failure must NOT propagate, or it would
+    kill the watcher thread that called record_error from its except handler —
+    a worse regression than the `except: pass` this feature replaced."""
+    import health
+
+    def _boom(*a, **k):
+        raise OSError('disk full / file locked')
+
+    monkeypatch.setattr(health, 'write_json', _boom)
+    # Neither of these may raise:
+    health.beat('calendar')
+    health.record_error('calendar', RuntimeError('api down'))
+
+
 def test_health_slash_command_reports_status(pebble_home):
     """/health surfaces per-loop beats and the last error to the user."""
     import health

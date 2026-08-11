@@ -96,17 +96,26 @@ class ProactiveEngine:
         """Signal all threads to stop."""
         self._stop.set()
 
+    def _run_check(self, name: str, check) -> None:
+        """Run one poll cycle: beat() on success, record_error() on failure.
+
+        The single place loops record health. Because health.beat/record_error
+        are best-effort, this never raises — a watcher thread cannot die here.
+        For this to be meaningful, the _check_* helpers must let real failures
+        propagate (no blanket inner `except: pass`)."""
+        try:
+            check()
+            health.beat(name)
+        except Exception as e:
+            health.record_error(name, e)
+
     # ── Calendar ───────────────────────────────────────────────────────────────
 
     def _calendar_loop(self):
         # Wait 10 seconds on first iteration to allow app to fully load
         self._stop.wait(timeout=10)
         while not self._stop.is_set():
-            try:
-                self._check_calendar()
-                health.beat('calendar')
-            except Exception as e:
-                health.record_error('calendar', e)
+            self._run_check('calendar', self._check_calendar)
             self._stop.wait(timeout=300)  # re-check every 5 minutes
 
     def _check_calendar(self):
@@ -115,50 +124,50 @@ class ProactiveEngine:
         if not is_google_connected():
             return
 
-        try:
-            svc = GoogleServices()
-            import datetime as dt
-            now  = dt.datetime.now().astimezone()
-            in20 = now + dt.timedelta(minutes=20)
+        # NOTE: no blanket try/except here — a real failure (expired token, API
+        # change) must propagate to _run_check so /health records a dead watcher
+        # instead of showing it healthy forever. Per-event parsing is still guarded.
+        svc = GoogleServices()
+        import datetime as dt
+        now  = dt.datetime.now().astimezone()
+        in20 = now + dt.timedelta(minutes=20)
 
-            # Get events starting in the next 0-20 minutes
-            events = svc.calendar.events().list(
-                calendarId='primary',
-                timeMin=now.isoformat(),
-                timeMax=in20.isoformat(),
-                singleEvents=True,
-                orderBy='startTime',
-                maxResults=5,
-            ).execute().get('items', [])
+        # Get events starting in the next 0-20 minutes
+        events = svc.calendar.events().list(
+            calendarId='primary',
+            timeMin=now.isoformat(),
+            timeMax=in20.isoformat(),
+            singleEvents=True,
+            orderBy='startTime',
+            maxResults=5,
+        ).execute().get('items', [])
 
-            for event in events:
-                eid     = event.get('id', '')
-                summary = event.get('summary', 'Untitled event')
-                start   = event.get('start', {})
-                start_str = start.get('dateTime') or start.get('date')
+        for event in events:
+            eid     = event.get('id', '')
+            summary = event.get('summary', 'Untitled event')
+            start   = event.get('start', {})
+            start_str = start.get('dateTime') or start.get('date')
 
-                if eid in self._notified_events:
-                    continue
+            if eid in self._notified_events:
+                continue
 
-                # Parse start time and check if within 15 minutes
-                try:
-                    start_dt = dt.datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-                    mins_away = int((start_dt.astimezone() - now).total_seconds() / 60)
-                    if 0 <= mins_away <= 15:
-                        self._notified_events.add(eid)
-                        location = event.get('location', '')
-                        bus.publish(CALENDAR_EVENT_APPROACHING, {
-                            'event_id':     eid,
-                            'title':        summary,
-                            'start_iso':    start_str,
-                            'minutes_away': mins_away,
-                            'location':     location,
-                            'attendees':    event.get('attendees', []),
-                        })
-                except Exception:
-                    continue
-        except Exception:
-            pass
+            # Parse start time and check if within 15 minutes
+            try:
+                start_dt = dt.datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                mins_away = int((start_dt.astimezone() - now).total_seconds() / 60)
+                if 0 <= mins_away <= 15:
+                    self._notified_events.add(eid)
+                    location = event.get('location', '')
+                    bus.publish(CALENDAR_EVENT_APPROACHING, {
+                        'event_id':     eid,
+                        'title':        summary,
+                        'start_iso':    start_str,
+                        'minutes_away': mins_away,
+                        'location':     location,
+                        'attendees':    event.get('attendees', []),
+                    })
+            except Exception:
+                continue
 
     def _notify_event(self, title: str, mins_away: int, location: str):
         def _show():
@@ -194,11 +203,7 @@ class ProactiveEngine:
         # Wait 15 seconds on first iteration
         self._stop.wait(timeout=15)
         while not self._stop.is_set():
-            try:
-                self._check_tasks()
-                health.beat('tasks')
-            except Exception as e:
-                health.record_error('tasks', e)
+            self._run_check('tasks', self._check_tasks)
             self._stop.wait(timeout=3600)  # re-check every hour
 
     def _check_tasks(self):
@@ -263,11 +268,7 @@ class ProactiveEngine:
         # Wait 30 seconds on first iteration
         self._stop.wait(timeout=30)
         while not self._stop.is_set():
-            try:
-                self._check_morning_briefing()
-                health.beat('morning')
-            except Exception as e:
-                health.record_error('morning', e)
+            self._run_check('morning', self._check_morning_briefing)
             self._stop.wait(timeout=600)  # re-check every 10 minutes
 
     def _check_morning_briefing(self):
@@ -313,29 +314,23 @@ class ProactiveEngine:
     def _reminder_loop(self):
         self._stop.wait(timeout=20)
         while not self._stop.is_set():
-            try:
-                self._check_reminders()
-                health.beat('reminders')
-            except Exception as e:
-                health.record_error('reminders', e)
+            self._run_check('reminders', self._check_reminders)
             self._stop.wait(timeout=60)  # check every minute
 
     def _check_reminders(self):
-        try:
-            from modules.reminders import get_due_reminders
-            due = get_due_reminders()
-            for r in due:
-                bus.publish(REMINDER_DUE, {'reminder': r})
-                # Mark done immediately to avoid repeat
-                import json
-                path = paths.data_dir() / 'reminders.json'
-                reminders = json.loads(path.read_text(encoding='utf-8'))
-                for rem in reminders:
-                    if rem.get('id') == r.get('id'):
-                        rem['done'] = True
-                path.write_text(json.dumps(reminders, indent=2), encoding='utf-8')
-        except Exception:
-            pass
+        # No blanket swallow: a failure here is recorded by _run_check via /health.
+        from modules.reminders import get_due_reminders
+        due = get_due_reminders()
+        for r in due:
+            bus.publish(REMINDER_DUE, {'reminder': r})
+            # Mark done immediately to avoid repeat
+            import json
+            path = paths.data_dir() / 'reminders.json'
+            reminders = json.loads(path.read_text(encoding='utf-8'))
+            for rem in reminders:
+                if rem.get('id') == r.get('id'):
+                    rem['done'] = True
+            path.write_text(json.dumps(reminders, indent=2), encoding='utf-8')
 
     def _notify_reminder(self, reminder: dict):
         def _show():
@@ -359,47 +354,41 @@ class ProactiveEngine:
     def _focus_loop(self):
         self._stop.wait(timeout=25)
         while not self._stop.is_set():
-            try:
-                self._check_focus()
-                health.beat('focus')
-            except Exception as e:
-                health.record_error('focus', e)
+            self._run_check('focus', self._check_focus)
             self._stop.wait(timeout=60)
 
     def _check_focus(self):
-        try:
-            from modules.focus_timer import get_focus_state
-            import datetime as dt
-            state = get_focus_state()
-            if not state.get('active'):
-                return
-            start_str = state.get('start_time', '')
-            if not start_str:
-                return
-            session_type = state.get('session_type', 'work')
-            task = state.get('task', 'Focus session')
+        # No blanket swallow: a failure here is recorded by _run_check via /health.
+        from modules.focus_timer import get_focus_state
+        import datetime as dt
+        state = get_focus_state()
+        if not state.get('active'):
+            return
+        start_str = state.get('start_time', '')
+        if not start_str:
+            return
+        session_type = state.get('session_type', 'work')
+        task = state.get('task', 'Focus session')
 
-            # Get duration from state or default
-            duration_map = {'work': 25, 'break': 5, 'long_break': 15}
-            duration_min = state.get('duration_minutes') or duration_map.get(session_type, 25)
+        # Get duration from state or default
+        duration_map = {'work': 25, 'break': 5, 'long_break': 15}
+        duration_min = state.get('duration_minutes') or duration_map.get(session_type, 25)
 
-            start_dt = dt.datetime.fromisoformat(start_str)
-            elapsed = (dt.datetime.now() - start_dt).total_seconds() / 60
-            remaining = duration_min - elapsed
+        start_dt = dt.datetime.fromisoformat(start_str)
+        elapsed = (dt.datetime.now() - start_dt).total_seconds() / 60
+        remaining = duration_min - elapsed
 
-            # Notify at 1 minute remaining and at session end
-            notify_key = f"{state.get('start_time')}_{session_type}"
-            if not hasattr(self, '_notified_focus'):
-                self._notified_focus: set = set()
+        # Notify at 1 minute remaining and at session end
+        notify_key = f"{state.get('start_time')}_{session_type}"
+        if not hasattr(self, '_notified_focus'):
+            self._notified_focus: set = set()
 
-            if remaining <= 0 and notify_key not in self._notified_focus:
-                self._notified_focus.add(notify_key)
-                bus.publish(FOCUS_SESSION_ENDED, {'session_type': session_type, 'task': task})
-            elif 0 < remaining <= 1 and f'{notify_key}_1min' not in self._notified_focus:
-                self._notified_focus.add(f'{notify_key}_1min')
-                self._notify_focus_1min(session_type, task)
-        except Exception:
-            pass
+        if remaining <= 0 and notify_key not in self._notified_focus:
+            self._notified_focus.add(notify_key)
+            bus.publish(FOCUS_SESSION_ENDED, {'session_type': session_type, 'task': task})
+        elif 0 < remaining <= 1 and f'{notify_key}_1min' not in self._notified_focus:
+            self._notified_focus.add(f'{notify_key}_1min')
+            self._notify_focus_1min(session_type, task)
 
     def _notify_focus_end(self, session_type: str, task: str):
         def _show():
@@ -442,11 +431,7 @@ class ProactiveEngine:
     def _meeting_prep_loop(self):
         self._stop.wait(timeout=45)
         while not self._stop.is_set():
-            try:
-                self._check_meeting_prep()
-                health.beat('meeting_prep')
-            except Exception as e:
-                health.record_error('meeting_prep', e)
+            self._run_check('meeting_prep', self._check_meeting_prep)
             self._stop.wait(timeout=120)  # check every 2 minutes
 
     def _check_meeting_prep(self):
@@ -454,44 +439,43 @@ class ProactiveEngine:
         if not is_google_connected():
             return
 
-        try:
-            import datetime as dt
-            svc = GoogleServices()
-            now    = dt.datetime.now().astimezone()
-            in_15  = now + dt.timedelta(minutes=15)
+        # No blanket swallow: a failure here is recorded by _run_check via /health.
+        # Per-event parsing is still guarded so one bad event doesn't skip the rest.
+        import datetime as dt
+        svc = GoogleServices()
+        now    = dt.datetime.now().astimezone()
+        in_15  = now + dt.timedelta(minutes=15)
 
-            events = svc.calendar.events().list(
-                calendarId='primary',
-                timeMin=now.isoformat(),
-                timeMax=in_15.isoformat(),
-                singleEvents=True,
-                orderBy='startTime',
-                maxResults=3,
-            ).execute().get('items', [])
+        events = svc.calendar.events().list(
+            calendarId='primary',
+            timeMin=now.isoformat(),
+            timeMax=in_15.isoformat(),
+            singleEvents=True,
+            orderBy='startTime',
+            maxResults=3,
+        ).execute().get('items', [])
 
-            for event in events:
-                eid     = event.get('id', '')
-                summary = event.get('summary', 'Untitled')
-                start   = event.get('start', {})
-                start_str = start.get('dateTime') or start.get('date', '')
-                attendees = event.get('attendees', [])
-                location  = event.get('location', '')
+        for event in events:
+            eid     = event.get('id', '')
+            summary = event.get('summary', 'Untitled')
+            start   = event.get('start', {})
+            start_str = start.get('dateTime') or start.get('date', '')
+            attendees = event.get('attendees', [])
+            location  = event.get('location', '')
 
-                prep_key = f'prep_{eid}'
-                if prep_key in self._meeting_prep_notified:
-                    continue
+            prep_key = f'prep_{eid}'
+            if prep_key in self._meeting_prep_notified:
+                continue
 
-                try:
-                    start_dt  = dt.datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-                    mins_away = int((start_dt.astimezone() - now).total_seconds() / 60)
-                    if 8 <= mins_away <= 14:
-                        self._meeting_prep_notified.add(prep_key)
-                        num_attendees = len([a for a in attendees if a.get('email') != 'me'])
-                        self._notify_meeting_prep(summary, mins_away, num_attendees, location)
-                except Exception:
-                    continue
-        except Exception:
-            pass
+            try:
+                start_dt  = dt.datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                mins_away = int((start_dt.astimezone() - now).total_seconds() / 60)
+                if 8 <= mins_away <= 14:
+                    self._meeting_prep_notified.add(prep_key)
+                    num_attendees = len([a for a in attendees if a.get('email') != 'me'])
+                    self._notify_meeting_prep(summary, mins_away, num_attendees, location)
+            except Exception:
+                continue
 
     def _notify_meeting_prep(self, title: str, mins: int, num_attendees: int, location: str):
         def _show():

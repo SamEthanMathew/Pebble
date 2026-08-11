@@ -36,26 +36,36 @@ def _load() -> dict[str, dict[str, Any]]:
 
 
 def beat(source: str) -> None:
-    """Record a successful cycle of a named loop/watcher."""
-    with _lock:
-        data = _load()
-        row = data.setdefault(source, {})
-        row['last_beat'] = _now_iso()
-        row['beats'] = int(row.get('beats', 0)) + 1
-        write_json(_path(), data)
+    """Record a successful cycle of a named loop/watcher. Best-effort: a health
+    write failure must never propagate — callers invoke this from inside a loop
+    and an IO error here must not kill the watcher thread."""
+    try:
+        with _lock:
+            data = _load()
+            row = data.setdefault(source, {})
+            row['last_beat'] = _now_iso()
+            row['beats'] = int(row.get('beats', 0)) + 1
+            write_json(_path(), data)
+    except Exception:
+        pass
 
 
 def record_error(source: str, err: BaseException | str) -> None:
-    """Record a failure of a named loop/watcher (replaces `except: pass`)."""
-    with _lock:
-        data = _load()
-        row = data.setdefault(source, {})
-        row['last_error'] = str(err)
-        row['last_error_type'] = (type(err).__name__
-                                  if isinstance(err, BaseException) else 'str')
-        row['last_error_at'] = _now_iso()
-        row['errors'] = int(row.get('errors', 0)) + 1
-        write_json(_path(), data)
+    """Record a failure of a named loop/watcher (replaces `except: pass`).
+    Best-effort — see beat(): this is called from a loop's except handler, so it
+    must swallow its own IO errors rather than crash the watcher it monitors."""
+    try:
+        with _lock:
+            data = _load()
+            row = data.setdefault(source, {})
+            row['last_error'] = str(err)
+            row['last_error_type'] = (type(err).__name__
+                                      if isinstance(err, BaseException) else 'str')
+            row['last_error_at'] = _now_iso()
+            row['errors'] = int(row.get('errors', 0)) + 1
+            write_json(_path(), data)
+    except Exception:
+        pass
 
 
 def snapshot() -> dict[str, dict[str, Any]]:
