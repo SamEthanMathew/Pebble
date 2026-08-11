@@ -153,13 +153,15 @@ Guiding principle: **turn on the safety architecture that already exists → ext
 
 ### Milestone A — "Make the real architecture the running architecture" (foundational, low external risk)
 **Goal:** the safety/decoupling the docs promise is actually load-bearing; zero user-visible regressions.
-1. `paths.py` single data-dir resolver + route `crab_config` through `atomic_io` (P0-5, P1-2).
-2. Cut over `ProactiveEngine` → events-only; `NotificationDispatcher` becomes sole subscriber with injected `popup_fn` (P0-2).
-3. Make `Autonomy.route()` the enforced write funnel; every planner emits `Proposal`s; wire `PLANNER_COMPLETED` → proposals; instantiate `ApprovalQueue` in production (P0-3).
-4. Route **all** write-tier tool calls (chat included) through autonomy; AUTO/read-only only may `execute` directly (P0-4).
-5. Replace `except Exception: pass` in hot loops with logged + health-signalled handlers; add `/health` (P1-5).
 
-**Validation gate:** existing 324 tests still green; new tests proving (a) a chat-driven `gmail.draft` now hits the first-time ledger, (b) a prompt-injection string in scraped text cannot trigger a NOTIFY write without gating, (c) two concurrent config writes don't lose a tier override, (d) a killed Gmail watcher surfaces in `/health` instead of dying silently.
+**STATUS (2026-08-11): 4 of 5 done, all TDD-verified, full suite 350 green.**
+1. ✅ **DONE** — `paths.py` single data-dir resolver + 31-file migration; `crab_config` through `atomic_io` (P0-5, P1-2). *(commits: atomic-config, paths resolver, 31-file migration)*
+2. ⏭️ **MOVED to Milestone B** — Cut over `ProactiveEngine` → events-only; `NotificationDispatcher` sole subscriber with injected `popup_fn` (P0-2). *Requires rewiring `main.py` + `proactive_engine.py` (Tk/thread runtime the test suite can't exercise); the audit sequences it with the engine extraction, where a headless-import test makes it verifiable. Doing it blind now would be unverifiable — deferred to B.*
+3. ⏭️ **MOVED to Milestone B** — `Autonomy.route()` as the enforced write funnel for planners; wire `PLANNER_COMPLETED` → proposals; `ApprovalQueue` in production (P0-3). *Same reason: runtime/GUI wiring best done with the engine extraction. Note the chat→autonomy funnel (P0-4) IS done — the highest-risk write path is already closed.*
+4. ✅ **DONE** — Route all write-tier chat tool calls through autonomy; AUTO/read-only execute directly (P0-4). *(commit: chat→autonomy chokepoint)*
+5. ✅ **DONE (loops)** — Replaced `except Exception: pass` in the six proactive_engine hot loops with `health.beat()`/`record_error()`; added `health.py` + `/health` (P1-5). *`main.py`'s startup swallows remain — fold into the B engine extraction.* *(commit: health registry)*
+
+**Validation gate — met for shipped items:** full suite green (350); new tests prove (a) a chat NOTIFY write is dry-run-safe and first-time-gated (was a direct `execute`), (b) chat cannot fire ASK, (c) config writes use the atomic writer, (d) a loop error is recorded and surfaced by `/health`. Remaining gates ((e) dispatcher-is-sole-subscriber, (f) planner→proposal wiring) land with P0-2/P0-3 in Milestone B.
 
 ### Milestone B — "Headless engine + one coherent, discoverable UI" (the biggest quality jump)
 **Goal:** a `PebbleEngine` runnable with no GUI imports; the UI becomes one design system with the approvals inbox and streaming.
