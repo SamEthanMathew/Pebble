@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import atomic_io
+
 _CONFIG_PATH = Path.home() / '.pebble' / 'config.json'
 
 
@@ -36,8 +38,10 @@ def _load() -> dict:
 
 
 def _save(data: dict):
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _CONFIG_PATH.write_text(json.dumps(data, indent=2, default=str), encoding='utf-8')
+    # Atomic write (write-tmp + os.replace) per contracts.md §11: config.json
+    # holds API keys and per-action tier overrides and is read/written across
+    # processes, so a torn write must never expose a partial file to a reader.
+    atomic_io.write_json(_CONFIG_PATH, data)
 
 
 def get(key: str, default=None):
