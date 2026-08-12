@@ -326,6 +326,58 @@ def test_dead_planner_keys_are_silent_real_ones_fire(pebble_home):
     bus.clear()
 
 
+def test_quiet_hours_defers_then_catches_up(pebble_home):
+    """A non-critical notification arriving in quiet hours is DEFERRED (not
+    dropped), and a single catch-up fires when quiet hours end — so an opted-in
+    email/Slack toast is never silently lost."""
+    import datetime
+    from planners.dispatcher import NotificationDispatcher, Notification
+
+    state = {'quiet': True}
+
+    def now_fn():
+        return datetime.datetime(2026, 5, 10, 23 if state['quiet'] else 9, 30)
+
+    popup = _CapturePopup()
+    d = NotificationDispatcher(popup_fn=popup, max_per_10min=10,
+                              quiet_hours_start='22:00', quiet_hours_end='07:00',
+                              now_fn=now_fn)
+    # during quiet hours: deferred, no popup yet
+    assert d.submit(Notification(title='📧 boss', body='urgent', urgency='high')) == 'suppressed:quiet_hours'
+    assert not popup.calls
+    d.flush_queue()               # prime the was-quiet state (still quiet -> no catch-up)
+    assert not popup.calls
+    # quiet hours end
+    state['quiet'] = False
+    d.flush_queue()               # transition -> fire one catch-up
+    assert popup.calls and 'away' in popup.calls[-1]['title'].lower()
+
+
+def test_email_event_routed_to_popup(pebble_home):
+    from events import bus, EMAIL_RECEIVED_IMPORTANT
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(EMAIL_RECEIVED_IMPORTANT,
+                {'sender': 'Prof Smith', 'subject': 'HW3 office hours', 'message_id': 'm1'})
+    assert popup.calls
+    assert 'Prof Smith' in popup.calls[-1]['title']
+    assert 'HW3' in popup.calls[-1]['body']
+    bus.clear()
+
+
+def test_slack_event_routed_to_popup(pebble_home):
+    from events import bus, SLACK_MESSAGE_IMPORTANT
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(SLACK_MESSAGE_IMPORTANT,
+                {'workspace': 'acme', 'channel_name': 'general',
+                 'user_name': 'Sam', 'text': 'ship it', 'ts': '123.45'})
+    assert popup.calls
+    assert 'general' in popup.calls[-1]['title'] and 'Sam' in popup.calls[-1]['title']
+    assert 'ship it' in popup.calls[-1]['body']
+    bus.clear()
+
+
 def test_dispatcher_emits_metrics(pebble_home):
     """Submitting a fired notification writes a metrics row."""
     import metrics

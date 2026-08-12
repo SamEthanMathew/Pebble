@@ -19,6 +19,7 @@ import audit
 CALENDAR_EVENT_APPROACHING = 'calendar.event_approaching'
 EMAIL_RECEIVED_IMPORTANT   = 'email.received_important'
 EMAIL_RECEIVED_UNKNOWN     = 'email.received_unknown'
+SLACK_MESSAGE_IMPORTANT    = 'slack.message_important'
 TASK_DUE_SOON              = 'task.due_soon'
 REMINDER_DUE               = 'reminder.due'
 FOCUS_SESSION_STARTED      = 'focus.started'
@@ -36,6 +37,7 @@ ALL_EVENT_TYPES = {
     CALENDAR_EVENT_APPROACHING,
     EMAIL_RECEIVED_IMPORTANT,
     EMAIL_RECEIVED_UNKNOWN,
+    SLACK_MESSAGE_IMPORTANT,
     TASK_DUE_SOON,
     REMINDER_DUE,
     FOCUS_SESSION_STARTED,

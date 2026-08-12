@@ -267,6 +267,18 @@ class CrabPet:
         except Exception:
             pass
 
+        # ── Engine + dispatcher FIRST ─────────────────────────────────────────
+        # The dispatcher (owned by the headless engine) is the SOLE notification
+        # subscriber — it applies rate-limit / quiet-hours / dedup / focus gating
+        # and calls our Tk renderer. Start it BEFORE the watchers so their
+        # published events always have a subscriber, and independent of the
+        # proactive engine so Gmail/Slack notifications work even if it fails.
+        try:
+            self._engine = PebbleEngine(notifier=self._render_notification)
+            self._engine.start()
+        except Exception:
+            pass
+
         # ── Gmail watcher ─────────────────────────────────────────────────────
         if _HAS_GMAIL_WATCHER:
             try:
@@ -326,14 +338,9 @@ class CrabPet:
             except Exception:
                 pass
 
+        # ── Proactive watchers (publish-only) ─────────────────────────────────
         if _HAS_PROACTIVE:
             try:
-                # The dispatcher (owned by the headless engine) is the SOLE
-                # notification subscriber — it applies rate-limit / quiet-hours /
-                # dedup / focus gating and calls our Tk renderer. ProactiveEngine
-                # only publishes events now (P0-2 cutover).
-                self._engine = PebbleEngine(notifier=self._render_notification)
-                self._engine.start()
                 self._proactive = ProactiveEngine()
                 self._proactive.start()
             except Exception:
@@ -414,50 +421,23 @@ class CrabPet:
             pass
 
     def _on_slack_notification(self, info: dict):
-        """Slack-watcher callback; runs in worker thread → schedule on Tk thread."""
-        def _show():
-            ws    = info.get('workspace', '')
-            ch    = info.get('channel_name', '?')
-            who   = info.get('user_name', 'someone')
-            text  = (info.get('text') or '')[:80]
-            if not text:
-                text = '(message has no text — maybe attachment/file)'
-
-            title = f'💬  {ws}  ·  #{ch}  ·  {who}' if ws else f'💬  #{ch}  ·  {who}'
-            popup = NotificationPopup(
-                self.root,
-                title=title,
-                body=text,
-                buttons=[
-                    {'label': 'Open Pebble', 'command': self._on_click, 'style': 'primary'},
-                    {'label': 'Ignore',      'command': lambda: None,    'style': 'default'},
-                ],
-                auto_dismiss_ms=15000,
-            )
-            popup.show()
-        self.root.after(0, _show)
+        """Slack-watcher callback (worker thread) → publish to the bus. The
+        dispatcher decides whether/how to show it (gating) and calls our renderer,
+        so Slack notifications get the same treatment as everything else."""
+        try:
+            from events import bus, SLACK_MESSAGE_IMPORTANT
+            bus.publish(SLACK_MESSAGE_IMPORTANT, info)
+        except Exception:
+            pass
 
     def _on_gmail_notification(self, info: dict):
-        """Called from background thread — must schedule on tkinter thread."""
-        def _show():
-            sender = info.get('sender', 'Unknown')
-            subject = info.get('subject', '(no subject)')
-            if len(subject) > 55:
-                subject = subject[:52] + '...'
-
-            popup = NotificationPopup(
-                self.root,
-                title=f'📧 {sender}',
-                body=subject,
-                buttons=[
-                    {'label': 'Ask Pebble', 'command': self._on_click, 'style': 'primary'},
-                    {'label': 'Ignore', 'command': lambda: None, 'style': 'default'},
-                ],
-                auto_dismiss_ms=10000,
-            )
-            popup.show()
-
-        self.root.after(0, _show)
+        """Gmail-watcher callback (worker thread) → publish to the bus; the
+        dispatcher renders it (no longer a direct Tk popup that bypassed gating)."""
+        try:
+            from events import bus, EMAIL_RECEIVED_IMPORTANT
+            bus.publish(EMAIL_RECEIVED_IMPORTANT, info)
+        except Exception:
+            pass
 
     # ── right-click menu ───────────────────────────────────────────────────────
 
