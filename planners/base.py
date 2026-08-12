@@ -14,10 +14,11 @@ from typing import Any
 
 import audit
 import metrics
+import paths
 from atomic_io import write_json, read_json
 from events import bus, PLANNER_COMPLETED
 
-_STATE_DIR = Path.home() / '.pebble' / 'state'
+_STATE_DIR = paths.state_dir()
 
 ENVELOPE_SCHEMA_VERSION = 1
 

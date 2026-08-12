@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from .base import ActionTier, PebbleModule
+import paths
 
 _MAX_DEPTH = 4
 
@@ -165,7 +166,7 @@ class FileSearchModule(PebbleModule):
             r'C:\Program Files',
             r'C:\Program Files (x86)',
             os.path.expandvars(r'%APPDATA%\Microsoft'),
-            str(Path.home() / '.pebble' / 'secrets'),
+            str(paths.secrets_dir()),
         ]
         denylist = []
         for d in denylist_raw:

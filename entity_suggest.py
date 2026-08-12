@@ -17,9 +17,10 @@ from typing import Any, Iterable
 
 import audit
 import entity_store
+import paths
 from atomic_io import read_json, write_json
 
-_LEDGER_PATH = Path.home() / '.pebble' / 'entity_unknown_seen.json'
+_LEDGER_PATH = paths.data_dir() / 'entity_unknown_seen.json'
 DEFAULT_THRESHOLD = 3
 
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 import io
 import base64
 from datetime import datetime
-from pathlib import Path
 
 from .base import ActionTier, PebbleModule
+import paths
 
 
 class ScreenshotModule(PebbleModule):
@@ -61,7 +61,7 @@ class ScreenshotModule(PebbleModule):
                 img = img.resize((1280, int(img.height * ratio)), Image.LANCZOS)
 
             # Save to ~/.pebble/last_screenshot.jpg
-            path = Path.home() / '.pebble' / 'last_screenshot.jpg'
+            path = paths.data_dir() / 'last_screenshot.jpg'
             path.parent.mkdir(parents=True, exist_ok=True)
             img.save(str(path), 'JPEG', quality=85)
 
@@ -89,7 +89,7 @@ def capture_screen() -> tuple[str, str]:
         img = img.resize((1280, int(img.height * ratio)), Image.LANCZOS)
 
     # Save to file
-    path = Path.home() / '.pebble' / 'last_screenshot.jpg'
+    path = paths.data_dir() / 'last_screenshot.jpg'
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(path), 'JPEG', quality=85)
 

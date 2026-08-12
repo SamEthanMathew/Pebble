@@ -7,6 +7,7 @@ import email.mime.text
 import threading
 from typing import Callable
 
+import health
 from .base import ActionTier, PebbleModule
 
 
@@ -240,18 +241,25 @@ class GmailWatcherThread:
         """
         first_run = True
         while not self._stop_event.wait(timeout=60 if not first_run else 0):
-            try:
-                new_emails = self._get_new_emails()
-                for info in new_emails:
-                    if not first_run:
-                        try:
-                            self._on_notification(info)
-                        except Exception:
-                            pass
-                    self._seen_ids.add(info['message_id'])
-            except Exception:
-                pass
+            self._poll_once(first_run=first_run)
             first_run = False
+
+    def _poll_once(self, *, first_run: bool) -> None:
+        """One poll cycle. beat() on success, record_error() on failure, so an
+        expired/revoked token surfaces in /health instead of being masked as
+        'no new mail'. Never raises — the watcher thread cannot die here."""
+        try:
+            new_emails = self._get_new_emails()
+            for info in new_emails:
+                if not first_run:
+                    try:
+                        self._on_notification(info)
+                    except Exception:
+                        pass
+                self._seen_ids.add(info['message_id'])
+            health.beat('gmail')
+        except Exception as e:
+            health.record_error('gmail', e)
 
     def _get_new_emails(self) -> list[dict]:
         """
@@ -261,11 +269,14 @@ class GmailWatcherThread:
         if not self._important_senders:
             return []
 
-        try:
-            from .google_auth import GoogleServices
-            svc = GoogleServices().gmail
-        except Exception:
+        from .google_auth import GoogleServices, is_google_connected
+        # Benign: not connected -> nothing to poll (healthy beat). A real failure
+        # while connected (expired/revoked token, API error) now PROPAGATES to
+        # _poll_once, which records it — instead of being swallowed as an empty
+        # inbox (the silently-dead-watcher bug this milestone exists to fix).
+        if not is_google_connected():
             return []
+        svc = GoogleServices().gmail
 
         # Build a query that matches any of the important senders
         from_parts = ' OR '.join(
@@ -273,12 +284,9 @@ class GmailWatcherThread:
         )
         query = f'({from_parts}) is:unread'
 
-        try:
-            result = svc.users().messages().list(
-                userId='me', q=query, maxResults=20
-            ).execute()
-        except Exception:
-            return []
+        result = svc.users().messages().list(
+            userId='me', q=query, maxResults=20
+        ).execute()
 
         messages = result.get('messages', [])
         new_emails: list[dict] = []

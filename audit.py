@@ -12,7 +12,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_AUDIT_PATH = Path.home() / '.pebble' / 'audit.jsonl'
+import paths
+
+_AUDIT_PATH = paths.data_dir() / 'audit.jsonl'
 
 
 def _now_iso() -> str:

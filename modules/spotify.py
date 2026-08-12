@@ -10,12 +10,12 @@ import threading
 import time
 import urllib.parse
 import webbrowser
-from pathlib import Path
 from typing import Optional
 
 import requests
 
 import crab_config
+import paths
 from .base import ActionTier, PebbleModule
 
 _API_BASE   = 'https://api.spotify.com/v1'
@@ -24,7 +24,7 @@ _AUTH_URL   = 'https://accounts.spotify.com/authorize'
 
 # Secrets file lives outside config.json so tokens never get committed via
 # shared config dumps or backups. Only contains token-shaped fields.
-_SECRETS_PATH = Path.home() / '.pebble' / 'secrets' / 'spotify_tokens.json'
+_SECRETS_PATH = paths.secrets_dir() / 'spotify_tokens.json'
 _TOKEN_KEYS   = ('access_token', 'refresh_token', 'expires_at')
 
 

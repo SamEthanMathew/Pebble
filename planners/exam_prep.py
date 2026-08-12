@@ -21,11 +21,12 @@ from typing import Any
 
 import audit
 import metrics
+import paths
 import prompts as prompt_lib
 from atomic_io import write_json, read_json
 from pathlib import Path
 
-_PLANS_PATH = Path.home() / '.pebble' / 'state' / 'exam_plans.json'
+_PLANS_PATH = paths.state_dir() / 'exam_plans.json'
 
 
 def _strip_code_fence(text: str) -> str:

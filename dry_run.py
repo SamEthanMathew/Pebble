@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import crab_config
+import paths
 from atomic_io import write_json
 
-_PREVIEW_DIR = Path.home() / '.pebble' / 'dry_run_previews'
+_PREVIEW_DIR = paths.data_dir() / 'dry_run_previews'
 
 
 def is_enabled() -> bool:

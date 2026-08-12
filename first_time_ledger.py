@@ -14,9 +14,10 @@ import datetime
 from pathlib import Path
 from typing import Any
 
+import paths
 from atomic_io import read_json, write_json
 
-_LEDGER_PATH = Path.home() / '.pebble' / 'first_time_seen.json'
+_LEDGER_PATH = paths.data_dir() / 'first_time_seen.json'
 
 
 def _now_iso() -> str:

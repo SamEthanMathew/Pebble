@@ -9,16 +9,16 @@ from __future__ import annotations
 import datetime
 import json
 import re
-from pathlib import Path
 from typing import Any
 
 import audit
 import prompts as prompt_lib
 import entity_store
+import paths
 from planners.base import BasePlanner
 
 
-_TASKS_PATH = Path.home() / '.pebble' / 'tasks.json'
+_TASKS_PATH = paths.data_dir() / 'tasks.json'
 
 
 def _today_iso() -> str:

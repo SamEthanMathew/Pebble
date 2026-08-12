@@ -10,16 +10,17 @@ See SECURITY.md for credential rotation guidance.
 from __future__ import annotations
 import json
 import os
-from pathlib import Path
+
+import paths
 
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/calendar',
 ]
 
-TOKEN_PATH       = Path.home() / '.pebble' / 'secrets' / 'google_token.json'
-_LEGACY_TOKEN_PATH = Path.home() / '.pebble' / 'google_token.json'
-SECRETS_PATH     = Path.home() / '.pebble' / 'secrets' / 'google_oauth.json'
+TOKEN_PATH       = paths.secrets_dir() / 'google_token.json'
+_LEGACY_TOKEN_PATH = paths.data_dir() / 'google_token.json'
+SECRETS_PATH     = paths.secrets_dir() / 'google_oauth.json'
 
 # One-time migration: move legacy token to the new secrets/ location so existing
 # users aren't logged out. Best-effort; never crash startup.

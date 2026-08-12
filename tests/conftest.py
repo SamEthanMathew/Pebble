@@ -21,6 +21,9 @@ if str(_ROOT) not in sys.path:
 @pytest.fixture
 def pebble_home(tmp_path, monkeypatch):
     """Redirect Path.home() so anything that writes to ~/.pebble lands in tmp_path."""
+    # paths.data_dir() honours PEBBLE_HOME over Path.home(); make sure a developer's
+    # stray env override can't leak a real data dir into a test.
+    monkeypatch.delenv('PEBBLE_HOME', raising=False)
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
     # Many of our modules import their _PATH at module-load time; reload sensitive ones
     # Reload order matters: events first (bus singleton), then anything that

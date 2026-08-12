@@ -13,7 +13,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_METRICS_PATH = Path.home() / '.pebble' / 'metrics.jsonl'
+import paths
+
+_METRICS_PATH = paths.data_dir() / 'metrics.jsonl'
 
 
 def _now_iso() -> str:

@@ -6,8 +6,9 @@ from pathlib import Path
 
 from .base import ActionTier, PebbleModule
 import crab_config
+import paths
 
-_JOURNAL_DIR = Path.home() / '.pebble' / 'journal'
+_JOURNAL_DIR = paths.data_dir() / 'journal'
 
 
 class JournalModule(PebbleModule):

@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 from .base import ActionTier, PebbleModule
+import paths
 
-_REMINDERS_PATH = Path.home() / '.pebble' / 'reminders.json'
+_REMINDERS_PATH = paths.data_dir() / 'reminders.json'
 
 
 # ── module-level helper (used by proactive_engine) ────────────────────────────

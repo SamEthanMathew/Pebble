@@ -35,11 +35,12 @@ from __future__ import annotations
 import datetime
 import json
 import threading
-from pathlib import Path
 from typing import Any
 
+import paths
 
-_LEDGER_PATH = Path.home() / '.pebble' / 'workspace' / 'thinking_schedule.jsonl'
+
+_LEDGER_PATH = paths.workspace_dir() / 'thinking_schedule.jsonl'
 
 # Defaults (used when config has no entry for a pass)
 _DEFAULTS: dict[str, dict[str, Any]] = {
