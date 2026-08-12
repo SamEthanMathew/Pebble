@@ -19,6 +19,7 @@ reduced to a thin Windows shell.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Callable
 
 
@@ -28,12 +29,18 @@ class PebbleEngine:
     metadata=)); the Windows shell passes a Tk renderer, a future web client posts
     to the browser. With no notifier, notifications are logged (dispatcher stub)."""
 
+    FLUSH_INTERVAL = 30  # seconds — drain the dispatcher's rate-limit queue
+
     def __init__(self, *, notifier: Callable[..., None] | None = None) -> None:
         self._notifier = notifier
         self._dispatcher = None
         self._autonomy = None
         self._approvals = None
         self._started = False
+        self._subscribed = False
+        self._flush_interval = self.FLUSH_INTERVAL
+        self._flush_stop = threading.Event()
+        self._flush_thread: threading.Thread | None = None
 
     # ── module registry ─────────────────────────────────────────────────────────
 
@@ -95,21 +102,50 @@ class PebbleEngine:
     @property
     def notifications(self):
         """The NotificationDispatcher — the single thing that decides popup/no-popup
-        and now/later. Built lazily with the injected popup_fn so it stays headless."""
+        and now/later. Built lazily with the injected popup_fn (stays headless), and
+        with rate-limit + quiet-hours read from config."""
         if self._dispatcher is None:
             from planners.dispatcher import NotificationDispatcher
-            self._dispatcher = NotificationDispatcher(popup_fn=self._notifier)
+            kw: dict = {'popup_fn': self._notifier}
+            try:
+                import crab_config
+                notif_cfg = crab_config.get('notifications', {}) or {}
+                sched_cfg = crab_config.get('schedule', {}) or {}
+                if notif_cfg.get('max_per_10min'):
+                    kw['max_per_10min'] = int(notif_cfg['max_per_10min'])
+                if sched_cfg.get('quiet_hours_start'):
+                    kw['quiet_hours_start'] = sched_cfg['quiet_hours_start']
+                if sched_cfg.get('quiet_hours_end'):
+                    kw['quiet_hours_end'] = sched_cfg['quiet_hours_end']
+            except Exception:
+                pass
+            self._dispatcher = NotificationDispatcher(**kw)
         return self._dispatcher
 
     # ── lifecycle ───────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """Wire the dispatcher as the notification consumer (subscribes to the bus).
-        Idempotent-ish: only subscribes once."""
+        """Subscribe the dispatcher to the bus and start draining its rate-limit
+        queue so queued (non-critical) notifications eventually fire — otherwise
+        everything past the first per-10-min slot would be silently dropped."""
         if self._started:
             return
-        self.notifications.start()
+        if not self._subscribed:
+            self.notifications.start()   # subscribe exactly once (survives stop/start)
+            self._subscribed = True
+        self._flush_stop.clear()
+        self._flush_thread = threading.Thread(
+            target=self._flush_loop, daemon=True, name='pebble-notif-flush')
+        self._flush_thread.start()
         self._started = True
 
+    def _flush_loop(self) -> None:
+        while not self._flush_stop.wait(timeout=self._flush_interval):
+            try:
+                self.notifications.flush_queue()
+            except Exception:
+                pass
+
     def stop(self) -> None:
+        self._flush_stop.set()
         self._started = False

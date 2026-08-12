@@ -400,9 +400,12 @@ class CrabPet:
                                  'style':   b.get('style', 'default')})
             if not resolved:
                 resolved = [{'label': 'Dismiss', 'command': lambda: None, 'style': 'default'}]
+            # auto_dismiss_ms is carried per-notification by the dispatcher
+            # (0 = persist until dismissed, e.g. reminders / focus-end).
+            auto_dismiss = (metadata or {}).get('auto_dismiss_ms', 15000)
             try:
                 NotificationPopup(self.root, title=title, body=body,
-                                  buttons=resolved, auto_dismiss_ms=15000).show()
+                                  buttons=resolved, auto_dismiss_ms=auto_dismiss).show()
             except Exception:
                 pass
         try:
@@ -479,6 +482,9 @@ class CrabPet:
                 except Exception: pass
             if self._proactive:
                 self._proactive.stop()
+            if self._engine:
+                try: self._engine.stop()
+                except Exception: pass
             if self._thinking_scheduler:
                 try: self._thinking_scheduler.stop()
                 except Exception: pass

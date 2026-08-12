@@ -54,6 +54,7 @@ class Notification:
     dedup_key: str | None = None  # if set, suppresses any later notif with same key
     buttons:   list[dict[str, Any]] = field(default_factory=list)
     metadata:  dict[str, Any] = field(default_factory=dict)
+    auto_dismiss_ms: int = 15000  # 0 = persist until dismissed (reminders, focus-end)
 
     def rank(self) -> int:
         return URGENCY_RANK.get(self.urgency, 1)
@@ -142,8 +143,10 @@ class NotificationDispatcher:
         title = payload.get('title', 'Untitled event')
         mins  = int(payload.get('minutes_away', 0))
         loc   = payload.get('location', '') or ''
-        body  = ('Starting now' if mins == 0
-                 else (f'In {mins} min' + (f' · {loc[:40]}' if loc else '')))
+        when  = ('Starting now' if mins == 0
+                 else 'In 1 minute' if mins == 1
+                 else f'In {mins} minutes')
+        body  = when + (f' · {loc[:40]}' if loc else '')
         urgency = 'critical' if mins <= 2 else 'high'
         self.submit(Notification(
             title=f'📅 {title}', body=body, urgency=urgency, kind='meeting',
@@ -159,7 +162,7 @@ class NotificationDispatcher:
             return
         title = (f'⚠️ {len(tasks)} overdue task{"s" if len(tasks) != 1 else ""}'
                  if kind == 'overdue'
-                 else f'✅ {len(tasks)} due today')
+                 else f'✅ {len(tasks)} task{"s" if len(tasks) != 1 else ""} due today')
         body = tasks[0][:60] + (f' +{len(tasks)-1} more' if len(tasks) > 1 else '')
         self.submit(Notification(
             title=title, body=body, urgency='high' if kind == 'overdue' else 'normal',
@@ -170,9 +173,12 @@ class NotificationDispatcher:
     def _on_reminder(self, payload: dict[str, Any]) -> None:
         rem = payload.get('reminder', {}) or {}
         text = (rem.get('text') or 'Reminder')[:80]
+        # critical: the user set this time — must fire even in quiet hours / under
+        # rate-limit, and persist (auto_dismiss_ms=0). The watcher marks it done on
+        # publish, so a suppressed reminder would be lost forever.
         self.submit(Notification(
-            title='🔔 Reminder', body=text, urgency='high', kind='reminder',
-            dedup_key=f'reminder:{rem.get("id", "")}',
+            title='🔔 Reminder', body=text, urgency='critical', kind='reminder',
+            dedup_key=f'reminder:{rem.get("id", "")}', auto_dismiss_ms=0,
             buttons=[{'label': 'Got it', 'action': 'dismiss', 'style': 'primary'},
                      {'label': 'Ask Pebble', 'action': 'open_chat', 'style': 'default'}],
         ))
@@ -196,9 +202,11 @@ class NotificationDispatcher:
             parts.append(f'{num} attendee{"s" if num != 1 else ""}')
         if loc:
             parts.append(loc[:30])
+        # critical: the meeting is 8-14 min away — a rate-limited/quiet-hours
+        # delay would make the prep useless, so it must fire immediately.
         self.submit(Notification(
             title=f'📋 Prep: {title[:45]}', body=' · '.join(parts),
-            urgency='high', kind='meeting_prep',
+            urgency='critical', kind='meeting_prep',
             dedup_key=f'prep:{payload.get("event_id", title)}',
             buttons=[{'label': 'Get briefed', 'action': 'open_chat', 'style': 'primary'},
                      dict(_DISMISS)],
@@ -210,9 +218,10 @@ class NotificationDispatcher:
     def _on_focus_soon(self, payload: dict[str, Any]) -> None:
         session_type = payload.get('session_type', 'work')
         label = 'break' if session_type == 'work' else 'session'
+        # critical: user-initiated session, 1 minute left — must show now.
         self.submit(Notification(
             title='⏱ 1 minute left', body=f'Wrapping up your {label}…',
-            urgency='high', kind='focus_soon',
+            urgency='critical', kind='focus_soon',
             buttons=[{'label': 'OK', 'action': 'dismiss', 'style': 'default'}],
         ))
 
@@ -228,6 +237,7 @@ class NotificationDispatcher:
             title, body = '⏱ Break over — back to work!', f'Ready to continue: {task[:50]}'
         self._fire(Notification(
             title=title, body=body, urgency='high', kind='focus_end',
+            auto_dismiss_ms=0,  # persist until dismissed (the 'take a break' cue)
             buttons=[dict(_ASK_PEBBLE), dict(_DISMISS)],
         ))
         # Catch-up summary for anything suppressed during the session
@@ -242,11 +252,13 @@ class NotificationDispatcher:
 
     # User-facing planners get a completion popup; internal state-doc planners
     # (schedule/wrapup) stay silent so we don't spam the user with plumbing.
+    # Only planners that actually publish PLANNER_COMPLETED (BasePlanner subclasses)
+    # belong here. 'morning' and 'exam_prep' are NOT BasePlanners (morning fires via
+    # MORNING_BRIEFING_DUE; exam_prep is invoked directly) — keeping them here would
+    # be dead keys. 'schedule' is internal plumbing → intentionally absent (silent).
     _PLANNER_NOTIFY = {
-        'morning':   ('☀️ Morning briefing ready', 'Your day is planned — open to see it.'),
-        'comms':     ('✉️ Draft replies ready',    'Pebble drafted replies for you to review.'),
-        'exam_prep': ('📚 Study plan ready',        'Your exam-prep plan is ready.'),
-        'school':    ('🎓 School update',           'Deadlines and study plan updated.'),
+        'comms':  ('✉️ Draft replies ready', 'Pebble drafted replies for you to review.'),
+        'school': ('🎓 School update',        'Deadlines and study plan updated.'),
     }
 
     def _on_planner_completed(self, payload: dict[str, Any]) -> None:
@@ -298,8 +310,10 @@ class NotificationDispatcher:
             'dedup_key': notif.dedup_key,
         })
         try:
+            meta = dict(notif.metadata or {})
+            meta.setdefault('auto_dismiss_ms', notif.auto_dismiss_ms)
             self._popup_fn(title=notif.title, body=notif.body,
-                           buttons=notif.buttons, metadata=notif.metadata)
+                           buttons=notif.buttons, metadata=meta)
         except Exception as e:
             metrics.emit('notification.fire_failed', {'kind': notif.kind, 'error': str(e)})
 

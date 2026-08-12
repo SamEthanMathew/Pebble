@@ -96,3 +96,37 @@ def test_engine_approve_unknown_proposal_is_safe(pebble_home):
     eng = pebble_engine.PebbleEngine()
     res = eng.approve('does-not-exist')
     assert res.status == 'error'
+
+
+def test_engine_start_drains_the_rate_limit_queue(pebble_home, monkeypatch):
+    """The engine must drive flush_queue so rate-limited (queued) notifications
+    eventually fire — otherwise the dispatcher silently drops everything past the
+    first per-10-min slot (a merge-blocking regression the review caught)."""
+    import time
+    import pebble_engine
+
+    eng = pebble_engine.PebbleEngine()
+    eng._flush_interval = 0.05
+    calls = []
+    monkeypatch.setattr(eng.notifications, 'flush_queue', lambda: calls.append(1))
+    eng.start()
+    try:
+        time.sleep(0.25)
+        assert calls, 'engine did not drain the dispatcher queue'
+    finally:
+        eng.stop()
+
+
+def test_engine_restart_does_not_double_subscribe(pebble_home):
+    """stop()/start() must not re-subscribe the dispatcher (which would double
+    every notification)."""
+    from events import bus, CALENDAR_EVENT_APPROACHING
+    import pebble_engine
+    eng = pebble_engine.PebbleEngine()
+    eng.start()
+    n1 = bus.subscriber_count(CALENDAR_EVENT_APPROACHING)
+    eng.stop()
+    eng.start()
+    n2 = bus.subscriber_count(CALENDAR_EVENT_APPROACHING)
+    eng.stop()
+    assert n1 == n2, 'restart double-subscribed the dispatcher'
