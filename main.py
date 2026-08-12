@@ -44,6 +44,8 @@ try:
 except ImportError:
     _HAS_PROACTIVE = False
 
+from pebble_engine import PebbleEngine
+
 try:
     from pynput import keyboard as _pynput_kb
     _HAS_PYNPUT = True
@@ -178,6 +180,7 @@ class CrabPet:
         self._gmail_watcher: 'GmailWatcherThread | None' = None
         self._slack_watchers: list = []   # one SlackWatcherThread per workspace
         self._proactive: 'ProactiveEngine | None' = None
+        self._engine: 'PebbleEngine | None' = None
         self._thinking_scheduler = None
         self._vault_for_callbacks = None
         self._hotkey_listener = None
@@ -325,10 +328,13 @@ class CrabPet:
 
         if _HAS_PROACTIVE:
             try:
-                self._proactive = ProactiveEngine(
-                    root=self.root,
-                    on_open_chat=self._on_click,
-                )
+                # The dispatcher (owned by the headless engine) is the SOLE
+                # notification subscriber — it applies rate-limit / quiet-hours /
+                # dedup / focus gating and calls our Tk renderer. ProactiveEngine
+                # only publishes events now (P0-2 cutover).
+                self._engine = PebbleEngine(notifier=self._render_notification)
+                self._engine.start()
+                self._proactive = ProactiveEngine()
                 self._proactive.start()
             except Exception:
                 pass
@@ -376,6 +382,31 @@ class CrabPet:
                 on_press=_on_press, on_release=_on_release, daemon=True
             )
             self._hotkey_listener.start()
+        except Exception:
+            pass
+
+    def _render_notification(self, *, title, body, buttons=None, metadata=None):
+        """popup_fn for the NotificationDispatcher. Renders a Tk toast on the main
+        thread, translating the dispatcher's headless button action-specs
+        ({'label','action','style'}) into real Tk commands. Runs from the
+        dispatcher (a worker/bus thread) → must schedule via root.after."""
+        def _show():
+            resolved = []
+            for b in (buttons or []):
+                action  = b.get('action')
+                command = self._on_click if action == 'open_chat' else (lambda: None)
+                resolved.append({'label':   b.get('label', 'OK'),
+                                 'command': command,
+                                 'style':   b.get('style', 'default')})
+            if not resolved:
+                resolved = [{'label': 'Dismiss', 'command': lambda: None, 'style': 'default'}]
+            try:
+                NotificationPopup(self.root, title=title, body=body,
+                                  buttons=resolved, auto_dismiss_ms=15000).show()
+            except Exception:
+                pass
+        try:
+            self.root.after(0, _show)
         except Exception:
             pass
 

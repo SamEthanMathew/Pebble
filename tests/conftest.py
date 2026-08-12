@@ -34,6 +34,7 @@ def pebble_home(tmp_path, monkeypatch):
                      'planners.base', 'planners',
                      'planners.schedule', 'planners.comms',
                      'planners.school', 'planners.dispatcher', 'planners.morning',
+                     'proactive_engine',
                      'first_time_ledger', 'autonomy', 'approval_queue',
                      'cache', 'scraper', 'planners.exam_prep',
                      'modules.memory', 'modules.reminders',
