@@ -90,6 +90,8 @@ class NotificationDispatcher:
         self._dedup_seen:       set[str] = set()
         self._focus_active:     bool = False
         self._suppressed_focus: list[Notification] = []
+        self._suppressed_quiet: list[Notification] = []  # deferred during quiet hours
+        self._was_quiet:        bool = False
         self._fired_count:      int = 0
 
     # ── public API ──────────────────────────────────────────────────────────
@@ -119,6 +121,12 @@ class NotificationDispatcher:
             return 'suppressed:dedup'
 
         if self._is_quiet_hours() and notif.urgency != 'critical':
+            # Defer, don't drop: opted-in reactive items (email/Slack) would
+            # otherwise be lost forever (the watcher marks them seen on publish).
+            # Fired as one catch-up when quiet hours end (see flush_queue).
+            self._suppressed_quiet.append(notif)
+            if len(self._suppressed_quiet) > 100:
+                self._suppressed_quiet = self._suppressed_quiet[-100:]
             metrics.emit('notification.suppressed', {'reason': 'quiet_hours', 'kind': notif.kind})
             return 'suppressed:quiet_hours'
 
@@ -356,9 +364,26 @@ class NotificationDispatcher:
     # ── periodic flush (caller drives this from a Tk after-loop or thread) ──
 
     def flush_queue(self) -> int:
-        """Try to fire queued notifications respecting rate limit. Returns count fired."""
+        """Try to fire queued notifications respecting rate limit. Returns count fired.
+        Also fires the overnight catch-up when quiet hours have just ended."""
+        self._maybe_quiet_catchup()
         fired = 0
         while self._queue and self._under_rate_limit():
             self._fire(self._queue.popleft())
             fired += 1
         return fired
+
+    def _maybe_quiet_catchup(self) -> None:
+        """When quiet hours end, fire one summary for what was deferred overnight."""
+        now_quiet = self._is_quiet_hours()
+        if self._was_quiet and not now_quiet and self._suppressed_quiet:
+            n = len(self._suppressed_quiet)
+            self._suppressed_quiet = []
+            self._fire(Notification(
+                title=f'🌙 {n} notification{"s" if n != 1 else ""} while you were away',
+                body='Arrived during quiet hours — open Pebble to catch up.',
+                urgency='normal', kind='quiet_catchup',
+                buttons=[{'label': 'Open', 'action': 'open_chat', 'style': 'primary'},
+                         dict(_DISMISS)],
+            ))
+        self._was_quiet = now_quiet
