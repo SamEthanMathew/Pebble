@@ -169,7 +169,13 @@ class PebbleEngine:
         publish to the bus; the dispatcher renders via the injected notifier. A
         headless client gets the same background services — the Windows shell only
         supplies the notifier."""
-        self.start()
+        # Each stage is isolated so one failure doesn't skip the others (parity
+        # with the old main.py, which guarded engine/gmail/slack/proactive
+        # separately).
+        try:
+            self.start()
+        except Exception:
+            pass
         self._start_watchers()
         self._start_proactive()
 

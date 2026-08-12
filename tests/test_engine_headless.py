@@ -174,6 +174,23 @@ def test_start_services_starts_gmail_watcher_when_configured(pebble_home, monkey
     assert eng._watchers and callable(started[0]['on_notification'])
 
 
+def test_start_services_starts_watchers_even_if_dispatcher_start_fails(pebble_home, monkeypatch):
+    """Parity with the old per-block isolation: a dispatcher/start() failure must
+    not skip the Gmail/Slack watchers + proactive engine."""
+    import pebble_engine
+    eng = pebble_engine.PebbleEngine()
+
+    def _boom():
+        raise RuntimeError('dispatcher start failed')
+
+    called = []
+    monkeypatch.setattr(eng, 'start', _boom)
+    monkeypatch.setattr(eng, '_start_watchers', lambda: called.append('w'))
+    monkeypatch.setattr(eng, '_start_proactive', lambda: called.append('p'))
+    eng.start_services()  # must not raise
+    assert called == ['w', 'p']
+
+
 def test_stop_stops_watchers(pebble_home):
     import pebble_engine
     stopped = []
