@@ -326,6 +326,31 @@ def test_dead_planner_keys_are_silent_real_ones_fire(pebble_home):
     bus.clear()
 
 
+def test_email_event_routed_to_popup(pebble_home):
+    from events import bus, EMAIL_RECEIVED_IMPORTANT
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(EMAIL_RECEIVED_IMPORTANT,
+                {'sender': 'Prof Smith', 'subject': 'HW3 office hours', 'message_id': 'm1'})
+    assert popup.calls
+    assert 'Prof Smith' in popup.calls[-1]['title']
+    assert 'HW3' in popup.calls[-1]['body']
+    bus.clear()
+
+
+def test_slack_event_routed_to_popup(pebble_home):
+    from events import bus, SLACK_MESSAGE_IMPORTANT
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(SLACK_MESSAGE_IMPORTANT,
+                {'workspace': 'acme', 'channel_name': 'general',
+                 'user_name': 'Sam', 'text': 'ship it', 'ts': '123.45'})
+    assert popup.calls
+    assert 'general' in popup.calls[-1]['title'] and 'Sam' in popup.calls[-1]['title']
+    assert 'ship it' in popup.calls[-1]['body']
+    bus.clear()
+
+
 def test_dispatcher_emits_metrics(pebble_home):
     """Submitting a fired notification writes a metrics row."""
     import metrics

@@ -33,6 +33,8 @@ from events import (
     PLANNER_COMPLETED,
     MORNING_BRIEFING_DUE,
     MEETING_PREP_DUE,
+    EMAIL_RECEIVED_IMPORTANT,
+    SLACK_MESSAGE_IMPORTANT,
 )
 
 
@@ -102,6 +104,8 @@ class NotificationDispatcher:
         bus.subscribe(FOCUS_ENDING_SOON,          self._on_focus_soon)
         bus.subscribe(MORNING_BRIEFING_DUE,       self._on_morning)
         bus.subscribe(MEETING_PREP_DUE,           self._on_meeting_prep)
+        bus.subscribe(EMAIL_RECEIVED_IMPORTANT,   self._on_email)
+        bus.subscribe(SLACK_MESSAGE_IMPORTANT,    self._on_slack)
         bus.subscribe(PLANNER_COMPLETED,          self._on_planner_completed)
 
     def submit(self, notif: Notification) -> str:
@@ -210,6 +214,28 @@ class NotificationDispatcher:
             dedup_key=f'prep:{payload.get("event_id", title)}',
             buttons=[{'label': 'Get briefed', 'action': 'open_chat', 'style': 'primary'},
                      dict(_DISMISS)],
+        ))
+
+    def _on_email(self, payload: dict[str, Any]) -> None:
+        sender  = payload.get('sender', 'Unknown')
+        subject = (payload.get('subject') or '(no subject)')[:55]
+        self.submit(Notification(
+            title=f'📧 {sender}', body=subject, urgency='high', kind='email',
+            dedup_key=f'email:{payload.get("message_id", "")}', auto_dismiss_ms=10000,
+            buttons=[dict(_ASK_PEBBLE), {'label': 'Ignore', 'action': 'dismiss', 'style': 'default'}],
+        ))
+
+    def _on_slack(self, payload: dict[str, Any]) -> None:
+        ws   = payload.get('workspace', '') or ''
+        ch   = payload.get('channel_name', '?')
+        who  = payload.get('user_name', 'someone')
+        text = (payload.get('text') or '')[:80] or '(message has no text)'
+        title = f'💬  {ws}  ·  #{ch}  ·  {who}' if ws else f'💬  #{ch}  ·  {who}'
+        self.submit(Notification(
+            title=title, body=text, urgency='high', kind='slack',
+            dedup_key=f'slack:{payload.get("workspace", "")}:{payload.get("ts", "")}',
+            buttons=[{'label': 'Open Pebble', 'action': 'open_chat', 'style': 'primary'},
+                     {'label': 'Ignore', 'action': 'dismiss', 'style': 'default'}],
         ))
 
     def _on_focus_start(self, payload: dict[str, Any]) -> None:
