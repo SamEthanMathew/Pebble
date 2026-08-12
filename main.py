@@ -26,23 +26,8 @@ try:
 except Exception:
     pass
 
-try:
-    from modules.gmail import GmailWatcherThread
-    _HAS_GMAIL_WATCHER = True
-except ImportError:
-    _HAS_GMAIL_WATCHER = False
-
-try:
-    from modules.slack_module import SlackWatcherThread
-    _HAS_SLACK_WATCHER = True
-except ImportError:
-    _HAS_SLACK_WATCHER = False
-
-try:
-    from proactive_engine import ProactiveEngine
-    _HAS_PROACTIVE = True
-except ImportError:
-    _HAS_PROACTIVE = False
+# Gmail/Slack watchers + proactive engine are now supervised by PebbleEngine
+# (headless); the shell no longer imports or wires them directly.
 
 from pebble_engine import PebbleEngine
 
@@ -177,10 +162,7 @@ class CrabPet:
         self._drag_crab_x  = 0.0
         self._chat_proc:  subprocess.Popen | None = None
         self._settings:   SettingsWindow   | None = None
-        self._gmail_watcher: 'GmailWatcherThread | None' = None
-        self._slack_watchers: list = []   # one SlackWatcherThread per workspace
-        self._proactive: 'ProactiveEngine | None' = None
-        self._engine: 'PebbleEngine | None' = None
+        self._engine: 'PebbleEngine | None' = None   # owns dispatcher + watchers + proactive
         self._thinking_scheduler = None
         self._vault_for_callbacks = None
         self._hotkey_listener = None
@@ -259,92 +241,15 @@ class CrabPet:
 
     def _start_notification_services(self):
         """Start Gmail/Slack watchers and proactive engine if configured."""
-        # Cache active modules once; multiple watchers read from this list
-        active = []
-        try:
-            from modules import get_active_modules
-            active = get_active_modules()
-        except Exception:
-            pass
-
-        # ── Engine + dispatcher FIRST ─────────────────────────────────────────
-        # The dispatcher (owned by the headless engine) is the SOLE notification
-        # subscriber — it applies rate-limit / quiet-hours / dedup / focus gating
-        # and calls our Tk renderer. Start it BEFORE the watchers so their
-        # published events always have a subscriber, and independent of the
-        # proactive engine so Gmail/Slack notifications work even if it fails.
+        # ── Engine owns the background services (headless) ────────────────────
+        # PebbleEngine subscribes the dispatcher (the sole notification consumer)
+        # and supervises the Gmail/Slack watchers — which publish to the bus — plus
+        # the proactive engine. The Windows shell only supplies the Tk notifier.
         try:
             self._engine = PebbleEngine(notifier=self._render_notification)
-            self._engine.start()
+            self._engine.start_services()
         except Exception:
             pass
-
-        # ── Gmail watcher ─────────────────────────────────────────────────────
-        if _HAS_GMAIL_WATCHER:
-            try:
-                gmail_mod = next((m for m in active if m.name == 'gmail'), None)
-                if gmail_mod is not None:
-                    cfg = gmail_mod.cfg
-                    senders_raw = cfg.get('important_senders', '')
-                    senders = [s.strip() for s in senders_raw.split(',') if s.strip()]
-                    if senders:
-                        self._gmail_watcher = GmailWatcherThread(
-                            important_senders=senders,
-                            on_notification=self._on_gmail_notification,
-                        )
-                        self._gmail_watcher.start()
-            except Exception:
-                pass
-
-        # ── Slack watchers (one per workspace) ────────────────────────────────
-        if _HAS_SLACK_WATCHER:
-            try:
-                slack_mod = next((m for m in active if m.name == 'slack'), None)
-                if slack_mod is not None:
-                    cfg = slack_mod.cfg
-                    workspaces = cfg.get('workspaces', {}) or {}
-
-                    if workspaces:
-                        # Multi-workspace path
-                        for ws_name, ws_cfg in workspaces.items():
-                            token = (ws_cfg.get('access_token') or '').strip()
-                            channels_raw = ws_cfg.get('important_channels', '')
-                            channels = [c.strip().lstrip('#')
-                                        for c in channels_raw.split(',') if c.strip()]
-                            if not (token and channels):
-                                continue
-                            w = SlackWatcherThread(
-                                token=token,
-                                channels=channels,
-                                on_notification=self._on_slack_notification,
-                                workspace_label=ws_name,
-                            )
-                            w.start()
-                            self._slack_watchers.append(w)
-                    else:
-                        # Backward compat: single-workspace
-                        token = cfg.get('bot_token', '').strip()
-                        channels_raw = cfg.get('important_channels', '')
-                        channels = [c.strip().lstrip('#')
-                                    for c in channels_raw.split(',') if c.strip()]
-                        if token and channels:
-                            w = SlackWatcherThread(
-                                token=token,
-                                channels=channels,
-                                on_notification=self._on_slack_notification,
-                            )
-                            w.start()
-                            self._slack_watchers.append(w)
-            except Exception:
-                pass
-
-        # ── Proactive watchers (publish-only) ─────────────────────────────────
-        if _HAS_PROACTIVE:
-            try:
-                self._proactive = ProactiveEngine()
-                self._proactive.start()
-            except Exception:
-                pass
 
         # ── Thinking-pass scheduler + reactive challenge (Phase E) ──────────
         try:
@@ -420,25 +325,6 @@ class CrabPet:
         except Exception:
             pass
 
-    def _on_slack_notification(self, info: dict):
-        """Slack-watcher callback (worker thread) → publish to the bus. The
-        dispatcher decides whether/how to show it (gating) and calls our renderer,
-        so Slack notifications get the same treatment as everything else."""
-        try:
-            from events import bus, SLACK_MESSAGE_IMPORTANT
-            bus.publish(SLACK_MESSAGE_IMPORTANT, info)
-        except Exception:
-            pass
-
-    def _on_gmail_notification(self, info: dict):
-        """Gmail-watcher callback (worker thread) → publish to the bus; the
-        dispatcher renders it (no longer a direct Tk popup that bypassed gating)."""
-        try:
-            from events import bus, EMAIL_RECEIVED_IMPORTANT
-            bus.publish(EMAIL_RECEIVED_IMPORTANT, info)
-        except Exception:
-            pass
-
     # ── right-click menu ───────────────────────────────────────────────────────
 
     def _show_menu(self, event):
@@ -455,13 +341,8 @@ class CrabPet:
         menu.add_command(label='  Settings',   command=defer(self._on_settings))
         menu.add_separator()
         def _quit():
-            if self._gmail_watcher:
-                self._gmail_watcher.stop()
-            for w in self._slack_watchers:
-                try: w.stop()
-                except Exception: pass
-            if self._proactive:
-                self._proactive.stop()
+            # The engine owns the Gmail/Slack watchers + proactive engine now, so
+            # stopping it stops them all.
             if self._engine:
                 try: self._engine.stop()
                 except Exception: pass
