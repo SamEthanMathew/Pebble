@@ -31,6 +31,20 @@ def test_importing_engine_pulls_in_no_gui_toolkit():
     assert r.returncode == 0, f'engine imported GUI toolkit: {r.stdout}\n{r.stderr}'
 
 
+def test_pebble_api_pulls_in_no_gui_toolkit():
+    """The local API must be headless — it's what a web/phone client imports."""
+    code = (
+        "import sys; import pebble_api; "
+        "bad=[m for m in ('tkinter','_tkinter','pywebview','webview','pynput') "
+        "if m in sys.modules]; "
+        "print('LOADED:'+','.join(bad)); "
+        "sys.exit(1 if bad else 0)"
+    )
+    r = subprocess.run([sys.executable, '-c', code],
+                       capture_output=True, text=True, cwd=str(_REPO))
+    assert r.returncode == 0, f'pebble_api imported GUI toolkit: {r.stdout}\n{r.stderr}'
+
+
 def test_proactive_engine_pulls_in_no_gui_toolkit():
     """proactive_engine is now publish-only + headless — importing it must not
     load any GUI toolkit (it used to import tkinter for the popup rendering)."""
