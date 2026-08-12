@@ -133,6 +133,79 @@ def test_calendar_event_payload_routed(pebble_home):
     bus.clear()
 
 
+class _CapturePopup:
+    """Captures buttons too, so we can assert action specs the shell will render."""
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *, title, body, buttons, metadata):
+        self.calls.append({'title': title, 'body': body,
+                           'buttons': buttons, 'metadata': metadata})
+
+
+def _open_dispatcher(popup):
+    from planners.dispatcher import NotificationDispatcher
+    d = NotificationDispatcher(popup_fn=popup, max_per_10min=10,
+                               quiet_hours_start='99:99', quiet_hours_end='99:99')
+    d.start()
+    return d
+
+
+def test_morning_briefing_event_routed(pebble_home):
+    from events import bus, MORNING_BRIEFING_DUE
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(MORNING_BRIEFING_DUE, {})
+    assert popup.calls and 'morning' in popup.calls[-1]['title'].lower()
+    bus.clear()
+
+
+def test_meeting_prep_event_routed(pebble_home):
+    from events import bus, MEETING_PREP_DUE
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(MEETING_PREP_DUE, {
+        'title': '1:1 with Sam', 'minutes_away': 10,
+        'num_attendees': 2, 'location': 'Zoom',
+    })
+    assert popup.calls
+    assert '1:1 with Sam' in popup.calls[-1]['title']
+    bus.clear()
+
+
+def test_focus_ending_soon_event_routed(pebble_home):
+    from events import bus, FOCUS_ENDING_SOON
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(FOCUS_ENDING_SOON, {'session_type': 'work', 'task': 'thesis'})
+    assert popup.calls and '1 min' in popup.calls[-1]['title'].lower()
+    bus.clear()
+
+
+def test_focus_end_fires_completion_popup(pebble_home):
+    from events import bus, FOCUS_SESSION_ENDED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(FOCUS_SESSION_ENDED, {'session_type': 'work', 'task': 'thesis'})
+    assert popup.calls
+    assert 'complete' in popup.calls[-1]['title'].lower()
+    bus.clear()
+
+
+def test_notifications_carry_button_action_specs(pebble_home):
+    """Notifications carry label/action/style button specs (no Tk callbacks) so a
+    shell can render them; the dispatcher stays headless."""
+    from events import bus, CALENDAR_EVENT_APPROACHING
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(CALENDAR_EVENT_APPROACHING,
+                {'event_id': 'e1', 'title': 'Lecture', 'minutes_away': 5})
+    btns = popup.calls[-1]['buttons']
+    assert any(b.get('action') == 'open_chat' for b in btns)
+    assert all('command' not in b for b in btns)   # headless: no Tk callables
+    bus.clear()
+
+
 def test_dispatcher_emits_metrics(pebble_home):
     """Submitting a fired notification writes a metrics row."""
     import metrics

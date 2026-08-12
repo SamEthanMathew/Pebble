@@ -29,11 +29,20 @@ from events import (
     REMINDER_DUE,
     FOCUS_SESSION_STARTED,
     FOCUS_SESSION_ENDED,
+    FOCUS_ENDING_SOON,
     PLANNER_COMPLETED,
+    MORNING_BRIEFING_DUE,
+    MEETING_PREP_DUE,
 )
 
 
 URGENCY_RANK = {'critical': 3, 'high': 2, 'normal': 1, 'low': 0}
+
+# Button specs are label/action/style dicts — NO Tk callables, so the dispatcher
+# stays headless. The platform shell's popup_fn maps `action` to a real command
+# ('open_chat' -> open the chat window, 'dismiss' -> close).
+_ASK_PEBBLE  = {'label': 'Ask Pebble', 'action': 'open_chat', 'style': 'primary'}
+_DISMISS     = {'label': 'Dismiss',    'action': 'dismiss',   'style': 'default'}
 
 
 @dataclass(order=False)
@@ -89,6 +98,9 @@ class NotificationDispatcher:
         bus.subscribe(REMINDER_DUE,               self._on_reminder)
         bus.subscribe(FOCUS_SESSION_STARTED,      self._on_focus_start)
         bus.subscribe(FOCUS_SESSION_ENDED,        self._on_focus_end)
+        bus.subscribe(FOCUS_ENDING_SOON,          self._on_focus_soon)
+        bus.subscribe(MORNING_BRIEFING_DUE,       self._on_morning)
+        bus.subscribe(MEETING_PREP_DUE,           self._on_meeting_prep)
         bus.subscribe(PLANNER_COMPLETED,          self._on_planner_completed)
 
     def submit(self, notif: Notification) -> str:
@@ -136,6 +148,7 @@ class NotificationDispatcher:
         self.submit(Notification(
             title=f'📅 {title}', body=body, urgency=urgency, kind='meeting',
             dedup_key=f'event:{payload.get("event_id", "")}',
+            buttons=[dict(_ASK_PEBBLE), dict(_DISMISS)],
             metadata={'event_id': payload.get('event_id', ''), 'minutes_away': mins},
         ))
 
@@ -151,6 +164,7 @@ class NotificationDispatcher:
         self.submit(Notification(
             title=title, body=body, urgency='high' if kind == 'overdue' else 'normal',
             kind='tasks', dedup_key=f'tasks:{kind}:{datetime.date.today().isoformat()}',
+            buttons=[dict(_ASK_PEBBLE), dict(_DISMISS)],
         ))
 
     def _on_reminder(self, payload: dict[str, Any]) -> None:
@@ -159,14 +173,64 @@ class NotificationDispatcher:
         self.submit(Notification(
             title='🔔 Reminder', body=text, urgency='high', kind='reminder',
             dedup_key=f'reminder:{rem.get("id", "")}',
+            buttons=[{'label': 'Got it', 'action': 'dismiss', 'style': 'primary'},
+                     {'label': 'Ask Pebble', 'action': 'open_chat', 'style': 'default'}],
+        ))
+
+    def _on_morning(self, payload: dict[str, Any]) -> None:
+        self.submit(Notification(
+            title='🌅 Good morning!', body='Ready to plan your day?',
+            urgency='normal', kind='morning',
+            dedup_key=f'morning:{datetime.date.today().isoformat()}',
+            buttons=[{'label': 'Plan my day', 'action': 'open_chat', 'style': 'primary'},
+                     {'label': 'Later', 'action': 'dismiss', 'style': 'default'}],
+        ))
+
+    def _on_meeting_prep(self, payload: dict[str, Any]) -> None:
+        title = payload.get('title', 'Untitled')
+        mins  = int(payload.get('minutes_away', 0))
+        num   = int(payload.get('num_attendees', 0))
+        loc   = payload.get('location', '') or ''
+        parts = [f'In {mins} minutes']
+        if num > 0:
+            parts.append(f'{num} attendee{"s" if num != 1 else ""}')
+        if loc:
+            parts.append(loc[:30])
+        self.submit(Notification(
+            title=f'📋 Prep: {title[:45]}', body=' · '.join(parts),
+            urgency='high', kind='meeting_prep',
+            dedup_key=f'prep:{payload.get("event_id", title)}',
+            buttons=[{'label': 'Get briefed', 'action': 'open_chat', 'style': 'primary'},
+                     dict(_DISMISS)],
         ))
 
     def _on_focus_start(self, payload: dict[str, Any]) -> None:
         self._focus_active = True
 
+    def _on_focus_soon(self, payload: dict[str, Any]) -> None:
+        session_type = payload.get('session_type', 'work')
+        label = 'break' if session_type == 'work' else 'session'
+        self.submit(Notification(
+            title='⏱ 1 minute left', body=f'Wrapping up your {label}…',
+            urgency='high', kind='focus_soon',
+            buttons=[{'label': 'OK', 'action': 'dismiss', 'style': 'default'}],
+        ))
+
     def _on_focus_end(self, payload: dict[str, Any]) -> None:
         self._focus_active = False
-        # Catch-up summary
+        # Session-complete popup (fires directly — it's a response to the user's
+        # own timer ending, so it should always show, like the catch-up).
+        session_type = payload.get('session_type', 'work')
+        task = (payload.get('task') or 'Focus session')
+        if session_type == 'work':
+            title, body = '🎉 Focus session complete!', f'Nice work on: {task[:50]} — time for a break!'
+        else:
+            title, body = '⏱ Break over — back to work!', f'Ready to continue: {task[:50]}'
+        self._fire(Notification(
+            title=title, body=body, urgency='high', kind='focus_end',
+            buttons=[dict(_ASK_PEBBLE), dict(_DISMISS)],
+        ))
+        # Catch-up summary for anything suppressed during the session
         if self._suppressed_focus:
             n = len(self._suppressed_focus)
             self._suppressed_focus.clear()
