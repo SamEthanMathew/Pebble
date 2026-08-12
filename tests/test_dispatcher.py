@@ -60,6 +60,23 @@ def test_rate_limit_queues_excess(pebble_home):
     assert d.fired_count() == 2
 
 
+def test_critical_fire_does_not_consume_noncritical_rate_budget(pebble_home):
+    """A critical notification must NOT poison the non-critical rate window —
+    otherwise (with reminders/meeting-prep/calendar all critical now) queued
+    non-critical notifications would never drain and be lost."""
+    from planners.dispatcher import NotificationDispatcher, Notification
+    t = [1000.0]
+    popup = _CapturePopup()
+    d = NotificationDispatcher(popup_fn=popup, max_per_10min=1,
+                               quiet_hours_start='99:99', quiet_hours_end='99:99',
+                               clock=lambda: t[0])
+    # a critical fires but must not consume the single non-critical slot
+    assert d.submit(Notification(title='C', body='', urgency='critical')) == 'fired'
+    # ... so a following normal notification still fires immediately
+    assert d.submit(Notification(title='N', body='', urgency='normal')) == 'fired'
+    assert d.fired_count() == 2
+
+
 def test_critical_bypasses_rate_limit(pebble_home):
     from planners.dispatcher import NotificationDispatcher, Notification
     popup = _FakePopup()
@@ -130,6 +147,182 @@ def test_calendar_event_payload_routed(pebble_home):
     })
     assert popup.calls
     assert 'Lecture' in popup.calls[-1]['title']
+    bus.clear()
+
+
+class _CapturePopup:
+    """Captures buttons too, so we can assert action specs the shell will render."""
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *, title, body, buttons, metadata):
+        self.calls.append({'title': title, 'body': body,
+                           'buttons': buttons, 'metadata': metadata})
+
+
+def _open_dispatcher(popup):
+    from planners.dispatcher import NotificationDispatcher
+    d = NotificationDispatcher(popup_fn=popup, max_per_10min=10,
+                               quiet_hours_start='99:99', quiet_hours_end='99:99')
+    d.start()
+    return d
+
+
+def test_morning_briefing_event_routed(pebble_home):
+    from events import bus, MORNING_BRIEFING_DUE
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(MORNING_BRIEFING_DUE, {})
+    assert popup.calls and 'morning' in popup.calls[-1]['title'].lower()
+    bus.clear()
+
+
+def test_meeting_prep_event_routed(pebble_home):
+    from events import bus, MEETING_PREP_DUE
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(MEETING_PREP_DUE, {
+        'title': '1:1 with Sam', 'minutes_away': 10,
+        'num_attendees': 2, 'location': 'Zoom',
+    })
+    assert popup.calls
+    assert '1:1 with Sam' in popup.calls[-1]['title']
+    bus.clear()
+
+
+def test_focus_ending_soon_event_routed(pebble_home):
+    from events import bus, FOCUS_ENDING_SOON
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(FOCUS_ENDING_SOON, {'session_type': 'work', 'task': 'thesis'})
+    assert popup.calls and '1 min' in popup.calls[-1]['title'].lower()
+    bus.clear()
+
+
+def test_focus_end_fires_completion_popup(pebble_home):
+    from events import bus, FOCUS_SESSION_ENDED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(FOCUS_SESSION_ENDED, {'session_type': 'work', 'task': 'thesis'})
+    assert popup.calls
+    assert 'complete' in popup.calls[-1]['title'].lower()
+    bus.clear()
+
+
+def test_notifications_carry_button_action_specs(pebble_home):
+    """Notifications carry label/action/style button specs (no Tk callbacks) so a
+    shell can render them; the dispatcher stays headless."""
+    from events import bus, CALENDAR_EVENT_APPROACHING
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(CALENDAR_EVENT_APPROACHING,
+                {'event_id': 'e1', 'title': 'Lecture', 'minutes_away': 5})
+    btns = popup.calls[-1]['buttons']
+    assert any(b.get('action') == 'open_chat' for b in btns)
+    assert all('command' not in b for b in btns)   # headless: no Tk callables
+    bus.clear()
+
+
+def test_planner_completed_surfaces_user_facing_notification(pebble_home):
+    from events import bus, PLANNER_COMPLETED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(PLANNER_COMPLETED,
+                {'planner': 'comms', 'state_doc': 'x.json', 'was_skipped': False})
+    assert popup.calls and 'draft' in popup.calls[-1]['title'].lower()
+    bus.clear()
+
+
+def test_planner_completed_skipped_is_silent(pebble_home):
+    from events import bus, PLANNER_COMPLETED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(PLANNER_COMPLETED, {'planner': 'comms', 'was_skipped': True})
+    assert not popup.calls
+    bus.clear()
+
+
+def test_internal_planner_completion_is_silent(pebble_home):
+    """Internal planners (schedule/school state docs) shouldn't pop up."""
+    from events import bus, PLANNER_COMPLETED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(PLANNER_COMPLETED, {'planner': 'schedule', 'was_skipped': False})
+    assert not popup.calls
+    bus.clear()
+
+
+def _quiet_dispatcher(popup):
+    """A dispatcher whose clock is fixed at 23:30 (inside default quiet hours),
+    so only critical notifications fire — deterministic, no real-time dependence."""
+    from planners.dispatcher import NotificationDispatcher
+    d = NotificationDispatcher(popup_fn=popup, max_per_10min=1,
+                               quiet_hours_start='22:00', quiet_hours_end='07:00',
+                               now_fn=lambda: datetime.datetime(2026, 5, 10, 23, 30))
+    d.start()
+    return d
+
+
+def test_reminder_fires_even_in_quiet_hours(pebble_home):
+    """Reminders are user-set and time-critical — they must NOT be suppressed by
+    quiet hours/rate-limit (which would lose them permanently, since the watcher
+    marks them done on publish)."""
+    from events import bus, REMINDER_DUE
+    popup = _CapturePopup()
+    _quiet_dispatcher(popup)
+    bus.publish(REMINDER_DUE, {'reminder': {'id': 'r1', 'text': 'meds'}})
+    assert popup.calls and 'meds' in popup.calls[-1]['body']
+    bus.clear()
+
+
+def test_meeting_prep_and_focus_warning_fire_in_quiet_hours(pebble_home):
+    """Time-critical, user-driven warnings bypass quiet hours."""
+    from events import bus, MEETING_PREP_DUE, FOCUS_ENDING_SOON
+    popup = _CapturePopup()
+    _quiet_dispatcher(popup)
+    bus.publish(MEETING_PREP_DUE, {'title': 'Standup', 'minutes_away': 10})
+    bus.publish(FOCUS_ENDING_SOON, {'session_type': 'work'})
+    titles = ' '.join(c['title'] for c in popup.calls)
+    assert 'Standup' in titles and '1 min' in titles.lower()
+    bus.clear()
+
+
+def test_reminder_and_focus_end_popups_persist(pebble_home):
+    """auto_dismiss_ms=0 (persist until dismissed) is plumbed through for
+    reminders and focus-end, restoring the pre-cutover behavior."""
+    from events import bus, REMINDER_DUE, FOCUS_SESSION_ENDED
+    popup = _CapturePopup()
+    _quiet_dispatcher(popup)   # reminder is critical -> fires; focus-end uses _fire
+    bus.publish(REMINDER_DUE, {'reminder': {'id': 'r1', 'text': 'meds'}})
+    assert popup.calls[-1]['metadata'].get('auto_dismiss_ms') == 0
+    bus.publish(FOCUS_SESSION_ENDED, {'session_type': 'work', 'task': 't'})
+    assert popup.calls[-1]['metadata'].get('auto_dismiss_ms') == 0
+    bus.clear()
+
+
+def test_calendar_body_keeps_pluralization_and_location(pebble_home):
+    from planners.dispatcher import NotificationDispatcher, Notification  # noqa
+    from events import bus, CALENDAR_EVENT_APPROACHING
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(CALENDAR_EVENT_APPROACHING,
+                {'event_id': 'e1', 'title': 'Lecture', 'minutes_away': 1, 'location': 'Room 4B'})
+    body = popup.calls[-1]['body']
+    assert 'In 1 minute' in body and 'Room 4B' in body   # not 'In 1 min', location kept
+    bus.clear()
+
+
+def test_dead_planner_keys_are_silent_real_ones_fire(pebble_home):
+    """morning/exam_prep are not BasePlanners (never publish PLANNER_COMPLETED);
+    schedule is internal. Only comms/school should pop up."""
+    from events import bus, PLANNER_COMPLETED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    for name in ('schedule', 'morning', 'exam_prep'):
+        bus.publish(PLANNER_COMPLETED, {'planner': name, 'was_skipped': False})
+    assert not popup.calls
+    bus.publish(PLANNER_COMPLETED, {'planner': 'comms', 'was_skipped': False})
+    assert popup.calls and 'draft' in popup.calls[-1]['title'].lower()
     bus.clear()
 
 

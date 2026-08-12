@@ -1,12 +1,13 @@
 """
 Proactive engine — background polling threads for Pebble.
-Checks calendar, tasks, and triggers morning briefing.
 
-Phase 1 refactor: polling loops PUBLISH events to the bus (events.py)
-instead of calling notification helpers directly. The existing _notify_*
-methods stay and are wired up as default subscribers, so user-visible
-behavior is unchanged. Phase 2 planners + dispatcher will subscribe to
-the same events and gradually take over routing decisions.
+PUBLISH-ONLY (Milestone B / P0-2): the polling loops watch calendar / tasks /
+reminders / focus / morning / meeting-prep and PUBLISH events to the bus. They do
+NOT render notifications and hold NO GUI reference — the NotificationDispatcher is
+the single subscriber that decides popup/no-popup (rate-limit, quiet hours, dedup,
+focus gating) and the platform shell supplies the actual renderer via popup_fn.
+
+This module is headless: it imports no tkinter/GUI toolkit.
 """
 
 from __future__ import annotations
@@ -14,8 +15,6 @@ from __future__ import annotations
 import threading
 import datetime
 from datetime import date
-from typing import Any, Callable
-import tkinter as tk
 
 import health
 import paths
@@ -25,68 +24,34 @@ from events import (
     TASK_DUE_SOON,
     REMINDER_DUE,
     FOCUS_SESSION_ENDED,
+    FOCUS_ENDING_SOON,
+    MORNING_BRIEFING_DUE,
+    MEETING_PREP_DUE,
 )
 
 
 class ProactiveEngine:
-    def __init__(self, root: tk.Tk, on_open_chat: Callable[[], None],
-                 on_open_chat_with_prompt: Callable[[str], None] | None = None):
-        """
-        root: the main tkinter Tk() window (for root.after scheduling)
-        on_open_chat: callable to open the Pebble chat window (passed from CrabPet._on_click)
-        """
-        self._root = root
-        self._on_open_chat = on_open_chat
-        self._on_open_chat_with_prompt = on_open_chat_with_prompt
+    """Background watcher supervisor. Publishes events only; never renders UI."""
+
+    def __init__(self) -> None:
         self._stop = threading.Event()
 
-        self._notified_events: set[str] = set()  # event IDs we've already notified about
+        self._notified_events: set[str] = set()  # event IDs we've already published
         self._last_task_check: datetime.datetime | None = None
         self._morning_briefing_done_date: date | None = None
         self._meeting_prep_notified: set[str] = set()
+        self._notified_focus: set[str] = set()
 
         self._threads: list[threading.Thread] = []
-
-        # Subscribe default notify handlers so user-visible behavior persists
-        # while planners are not yet in place. Each handler unpacks the payload
-        # and calls the existing _notify_* method.
-        bus.subscribe(CALENDAR_EVENT_APPROACHING, self._on_calendar_event)
-        bus.subscribe(TASK_DUE_SOON,              self._on_tasks_due)
-        bus.subscribe(REMINDER_DUE,               self._on_reminder_due)
-        bus.subscribe(FOCUS_SESSION_ENDED,        self._on_focus_end)
-
-    # ── default subscribers (translate payload → existing notify method) ─────
-
-    def _on_calendar_event(self, payload: dict[str, Any]) -> None:
-        self._notify_event(
-            payload.get('title', 'Untitled event'),
-            int(payload.get('minutes_away', 0)),
-            payload.get('location', '') or '',
-        )
-
-    def _on_tasks_due(self, payload: dict[str, Any]) -> None:
-        kind  = payload.get('kind', 'today')
-        tasks = payload.get('tasks', [])
-        if tasks:
-            self._notify_tasks(kind, tasks)
-
-    def _on_reminder_due(self, payload: dict[str, Any]) -> None:
-        self._notify_reminder(payload.get('reminder', {}))
-
-    def _on_focus_end(self, payload: dict[str, Any]) -> None:
-        self._notify_focus_end(
-            payload.get('session_type', 'work'),
-            payload.get('task', 'Focus session'),
-        )
 
     def start(self):
         """Start all background polling threads."""
         self._threads = [
-            threading.Thread(target=self._calendar_loop,   daemon=True, name='pebble-calendar'),
-            threading.Thread(target=self._task_loop,       daemon=True, name='pebble-tasks'),
-            threading.Thread(target=self._morning_loop,    daemon=True, name='pebble-morning'),
-            threading.Thread(target=self._reminder_loop,   daemon=True, name='pebble-reminders'),
-            threading.Thread(target=self._focus_loop,      daemon=True, name='pebble-focus'),
+            threading.Thread(target=self._calendar_loop,     daemon=True, name='pebble-calendar'),
+            threading.Thread(target=self._task_loop,         daemon=True, name='pebble-tasks'),
+            threading.Thread(target=self._morning_loop,      daemon=True, name='pebble-morning'),
+            threading.Thread(target=self._reminder_loop,     daemon=True, name='pebble-reminders'),
+            threading.Thread(target=self._focus_loop,        daemon=True, name='pebble-focus'),
             threading.Thread(target=self._meeting_prep_loop, daemon=True, name='pebble-meeting-prep'),
         ]
         for t in self._threads:
@@ -132,7 +97,6 @@ class ProactiveEngine:
         now  = dt.datetime.now().astimezone()
         in20 = now + dt.timedelta(minutes=20)
 
-        # Get events starting in the next 0-20 minutes
         events = svc.calendar.events().list(
             calendarId='primary',
             timeMin=now.isoformat(),
@@ -151,56 +115,25 @@ class ProactiveEngine:
             if eid in self._notified_events:
                 continue
 
-            # Parse start time and check if within 15 minutes
             try:
                 start_dt = dt.datetime.fromisoformat(start_str.replace('Z', '+00:00'))
                 mins_away = int((start_dt.astimezone() - now).total_seconds() / 60)
                 if 0 <= mins_away <= 15:
                     self._notified_events.add(eid)
-                    location = event.get('location', '')
                     bus.publish(CALENDAR_EVENT_APPROACHING, {
                         'event_id':     eid,
                         'title':        summary,
                         'start_iso':    start_str,
                         'minutes_away': mins_away,
-                        'location':     location,
+                        'location':     event.get('location', ''),
                         'attendees':    event.get('attendees', []),
                     })
             except Exception:
                 continue
 
-    def _notify_event(self, title: str, mins_away: int, location: str):
-        def _show():
-            from notification_popup import NotificationPopup
-            if mins_away == 0:
-                time_str = 'Starting now'
-            elif mins_away == 1:
-                time_str = 'In 1 minute'
-            else:
-                time_str = f'In {mins_away} minutes'
-
-            body = time_str
-            if location:
-                body += f' · {location[:40]}'
-
-            popup = NotificationPopup(
-                self._root,
-                title=f'📅 {title}',
-                body=body,
-                buttons=[
-                    {'label': 'Ask Pebble', 'command': self._on_open_chat, 'style': 'primary'},
-                    {'label': 'Dismiss', 'command': lambda: None, 'style': 'default'},
-                ],
-                auto_dismiss_ms=20000,
-            )
-            popup.show()
-
-        self._root.after(0, _show)
-
     # ── Tasks ──────────────────────────────────────────────────────────────────
 
     def _task_loop(self):
-        # Wait 15 seconds on first iteration
         self._stop.wait(timeout=15)
         while not self._stop.is_set():
             self._run_check('tasks', self._check_tasks)
@@ -237,35 +170,11 @@ class ProactiveEngine:
         if overdue:
             bus.publish(TASK_DUE_SOON, {'kind': 'overdue', 'tasks': overdue})
         elif due_today:
-            bus.publish(TASK_DUE_SOON, {'kind': 'today',   'tasks': due_today})
-
-    def _notify_tasks(self, kind: str, tasks: list[str]):
-        def _show():
-            from notification_popup import NotificationPopup
-            if kind == 'overdue':
-                title = f'⚠️ {len(tasks)} overdue task{"s" if len(tasks) > 1 else ""}'
-                body = tasks[0][:60] + (f' +{len(tasks)-1} more' if len(tasks) > 1 else '')
-            else:
-                title = f'✅ {len(tasks)} task{"s" if len(tasks) > 1 else ""} due today'
-                body = tasks[0][:60] + (f' +{len(tasks)-1} more' if len(tasks) > 1 else '')
-
-            popup = NotificationPopup(
-                self._root,
-                title=title,
-                body=body,
-                buttons=[
-                    {'label': 'Ask Pebble', 'command': self._on_open_chat, 'style': 'primary'},
-                    {'label': 'Dismiss',    'command': lambda: None, 'style': 'default'},
-                ],
-                auto_dismiss_ms=12000,
-            )
-            popup.show()
-        self._root.after(0, _show)
+            bus.publish(TASK_DUE_SOON, {'kind': 'today', 'tasks': due_today})
 
     # ── Morning briefing ───────────────────────────────────────────────────────
 
     def _morning_loop(self):
-        # Wait 30 seconds on first iteration
         self._stop.wait(timeout=30)
         while not self._stop.is_set():
             self._run_check('morning', self._check_morning_briefing)
@@ -284,30 +193,14 @@ class ProactiveEngine:
         if self._morning_briefing_done_date == today:
             return
 
-        # Check if today's journal already exists
+        # Skip if today's journal already exists
         journal_path = paths.data_dir() / 'journal' / f'{today.isoformat()}.md'
         if journal_path.exists():
             self._morning_briefing_done_date = today
             return
 
         self._morning_briefing_done_date = today
-        self._notify_morning()
-
-    def _notify_morning(self):
-        def _show():
-            from notification_popup import NotificationPopup
-            popup = NotificationPopup(
-                self._root,
-                title='🌅 Good morning!',
-                body="Ready to plan your day?",
-                buttons=[
-                    {'label': 'Plan my day', 'command': self._on_open_chat, 'style': 'primary'},
-                    {'label': 'Later',       'command': lambda: None, 'style': 'default'},
-                ],
-                auto_dismiss_ms=30000,
-            )
-            popup.show()
-        self._root.after(0, _show)
+        bus.publish(MORNING_BRIEFING_DUE, {})
 
     # ── Reminders ──────────────────────────────────────────────────────────────
 
@@ -332,23 +225,6 @@ class ProactiveEngine:
                     rem['done'] = True
             path.write_text(json.dumps(reminders, indent=2), encoding='utf-8')
 
-    def _notify_reminder(self, reminder: dict):
-        def _show():
-            from notification_popup import NotificationPopup
-            text = reminder.get('text', 'Reminder')
-            popup = NotificationPopup(
-                self._root,
-                title='🔔 Reminder',
-                body=text[:80],
-                buttons=[
-                    {'label': 'Got it',      'command': lambda: None,        'style': 'primary'},
-                    {'label': 'Ask Pebble',  'command': self._on_open_chat,  'style': 'default'},
-                ],
-                auto_dismiss_ms=0,  # don't auto-dismiss reminders
-            )
-            popup.show()
-        self._root.after(0, _show)
-
     # ── Focus timer ────────────────────────────────────────────────────────────
 
     def _focus_loop(self):
@@ -370,7 +246,6 @@ class ProactiveEngine:
         session_type = state.get('session_type', 'work')
         task = state.get('task', 'Focus session')
 
-        # Get duration from state or default
         duration_map = {'work': 25, 'break': 5, 'long_break': 15}
         duration_min = state.get('duration_minutes') or duration_map.get(session_type, 25)
 
@@ -378,53 +253,14 @@ class ProactiveEngine:
         elapsed = (dt.datetime.now() - start_dt).total_seconds() / 60
         remaining = duration_min - elapsed
 
-        # Notify at 1 minute remaining and at session end
         notify_key = f"{state.get('start_time')}_{session_type}"
-        if not hasattr(self, '_notified_focus'):
-            self._notified_focus: set = set()
 
         if remaining <= 0 and notify_key not in self._notified_focus:
             self._notified_focus.add(notify_key)
             bus.publish(FOCUS_SESSION_ENDED, {'session_type': session_type, 'task': task})
         elif 0 < remaining <= 1 and f'{notify_key}_1min' not in self._notified_focus:
             self._notified_focus.add(f'{notify_key}_1min')
-            self._notify_focus_1min(session_type, task)
-
-    def _notify_focus_end(self, session_type: str, task: str):
-        def _show():
-            from notification_popup import NotificationPopup
-            if session_type == 'work':
-                title = '🎉 Focus session complete!'
-                body  = f'Nice work on: {task[:50]}\nTime for a break!'
-            else:
-                title = '⏱ Break over — back to work!'
-                body  = f'Ready to continue: {task[:50]}'
-            popup = NotificationPopup(
-                self._root,
-                title=title,
-                body=body,
-                buttons=[
-                    {'label': 'Ask Pebble', 'command': self._on_open_chat, 'style': 'primary'},
-                    {'label': 'Dismiss',    'command': lambda: None,       'style': 'default'},
-                ],
-                auto_dismiss_ms=0,
-            )
-            popup.show()
-        self._root.after(0, _show)
-
-    def _notify_focus_1min(self, session_type: str, task: str):
-        def _show():
-            from notification_popup import NotificationPopup
-            label = 'break' if session_type == 'work' else 'session'
-            popup = NotificationPopup(
-                self._root,
-                title='⏱ 1 minute left',
-                body=f'Wrapping up your {label}...',
-                buttons=[{'label': 'OK', 'command': lambda: None, 'style': 'default'}],
-                auto_dismiss_ms=8000,
-            )
-            popup.show()
-        self._root.after(0, _show)
+            bus.publish(FOCUS_ENDING_SOON, {'session_type': session_type, 'task': task})
 
     # ── Meeting prep ───────────────────────────────────────────────────────────
 
@@ -473,32 +309,12 @@ class ProactiveEngine:
                 if 8 <= mins_away <= 14:
                     self._meeting_prep_notified.add(prep_key)
                     num_attendees = len([a for a in attendees if a.get('email') != 'me'])
-                    self._notify_meeting_prep(summary, mins_away, num_attendees, location)
+                    bus.publish(MEETING_PREP_DUE, {
+                        'event_id':      eid,
+                        'title':         summary,
+                        'minutes_away':  mins_away,
+                        'num_attendees': num_attendees,
+                        'location':      location,
+                    })
             except Exception:
                 continue
-
-    def _notify_meeting_prep(self, title: str, mins: int, num_attendees: int, location: str):
-        def _show():
-            from notification_popup import NotificationPopup
-            body_parts = [f'In {mins} minutes']
-            if num_attendees > 0:
-                body_parts.append(f'{num_attendees} attendee{"s" if num_attendees > 1 else ""}')
-            if location:
-                body_parts.append(location[:30])
-            body = ' · '.join(body_parts)
-
-            def _prep():
-                self._on_open_chat()
-
-            popup = NotificationPopup(
-                self._root,
-                title=f'📋 Prep: {title[:45]}',
-                body=body,
-                buttons=[
-                    {'label': 'Get briefed', 'command': _prep, 'style': 'primary'},
-                    {'label': 'Dismiss',     'command': lambda: None, 'style': 'default'},
-                ],
-                auto_dismiss_ms=25000,
-            )
-            popup.show()
-        self._root.after(0, _show)

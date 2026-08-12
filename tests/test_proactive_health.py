@@ -11,9 +11,55 @@ from __future__ import annotations
 
 def _engine():
     from proactive_engine import ProactiveEngine
-    # __init__ only stores root + subscribes to the bus; it never calls root
-    # methods, so a bare sentinel is enough (no real Tk window needed).
-    return ProactiveEngine(root=object(), on_open_chat=lambda: None)
+    # Publish-only + headless: no root, no callbacks.
+    return ProactiveEngine()
+
+
+def test_proactive_engine_is_publish_only_no_self_subscribe(pebble_home):
+    """P0-2: constructing the engine must add NO bus subscribers (the dispatcher
+    is the sole subscriber now). Otherwise events would fire twice."""
+    from events import bus, CALENDAR_EVENT_APPROACHING, TASK_DUE_SOON, REMINDER_DUE
+    before = {e: bus.subscriber_count(e)
+              for e in (CALENDAR_EVENT_APPROACHING, TASK_DUE_SOON, REMINDER_DUE)}
+    _engine()
+    for e, n in before.items():
+        assert bus.subscriber_count(e) == n, f'engine self-subscribed to {e}'
+
+
+def test_check_focus_publishes_ending_soon(pebble_home, monkeypatch):
+    """The focus loop publishes an event; it does not render a popup itself."""
+    import datetime as dt
+    import modules.focus_timer as ft
+    from events import bus, FOCUS_ENDING_SOON
+
+    start = (dt.datetime.now() - dt.timedelta(minutes=24)).isoformat()  # ~1 min left of 25
+    monkeypatch.setattr(ft, 'get_focus_state', lambda: {
+        'active': True, 'start_time': start, 'session_type': 'work',
+        'task': 'thesis', 'duration_minutes': 25,
+    })
+    got = []
+    bus.subscribe(FOCUS_ENDING_SOON, lambda p: got.append(p))
+    _engine()._check_focus()
+    assert got and got[-1]['session_type'] == 'work'
+    bus.clear()
+
+
+def test_engine_and_dispatcher_fire_exactly_one_popup(pebble_home):
+    """End-to-end P0-2: publish a calendar event with only the dispatcher wired,
+    and exactly one popup fires (no double from a lingering engine subscriber)."""
+    from events import bus, CALENDAR_EVENT_APPROACHING
+    from planners.dispatcher import NotificationDispatcher
+
+    fired = []
+    d = NotificationDispatcher(popup_fn=lambda **kw: fired.append(kw),
+                               max_per_10min=10,
+                               quiet_hours_start='99:99', quiet_hours_end='99:99')
+    d.start()
+    _engine()  # must not add a second subscriber
+    bus.publish(CALENDAR_EVENT_APPROACHING,
+                {'event_id': 'e1', 'title': 'Lecture', 'minutes_away': 5})
+    assert len(fired) == 1
+    bus.clear()
 
 
 def test_run_check_beats_on_success(pebble_home):

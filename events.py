@@ -23,11 +23,14 @@ TASK_DUE_SOON              = 'task.due_soon'
 REMINDER_DUE               = 'reminder.due'
 FOCUS_SESSION_STARTED      = 'focus.started'
 FOCUS_SESSION_ENDED        = 'focus.ended'
+FOCUS_ENDING_SOON          = 'focus.ending_soon'      # ~1 min left
 USER_ACTIVE                = 'user.active'
 USER_IDLE                  = 'user.idle'
 ENTITY_UPDATED             = 'entity.updated'
 PLANNER_COMPLETED          = 'planner.completed'
 STATE_DOC_UPDATED          = 'state_doc.updated'
+MORNING_BRIEFING_DUE       = 'morning.briefing_due'
+MEETING_PREP_DUE           = 'meeting.prep_due'
 
 ALL_EVENT_TYPES = {
     CALENDAR_EVENT_APPROACHING,
@@ -37,11 +40,14 @@ ALL_EVENT_TYPES = {
     REMINDER_DUE,
     FOCUS_SESSION_STARTED,
     FOCUS_SESSION_ENDED,
+    FOCUS_ENDING_SOON,
     USER_ACTIVE,
     USER_IDLE,
     ENTITY_UPDATED,
     PLANNER_COMPLETED,
     STATE_DOC_UPDATED,
+    MORNING_BRIEFING_DUE,
+    MEETING_PREP_DUE,
 }
 
 
