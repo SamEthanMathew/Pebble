@@ -131,6 +131,81 @@ def test_engine_start_drains_the_rate_limit_queue(pebble_home, monkeypatch):
         eng.stop()
 
 
+def test_start_services_headless_with_no_config(pebble_home):
+    """start_services() brings up dispatcher + watchers + proactive without a GUI
+    and without crashing when nothing is configured."""
+    from events import bus, CALENDAR_EVENT_APPROACHING
+    import pebble_engine
+    eng = pebble_engine.PebbleEngine()
+    eng.start_services()
+    try:
+        assert eng._started
+        assert bus.subscriber_count(CALENDAR_EVENT_APPROACHING) >= 1  # dispatcher wired
+    finally:
+        eng.stop()
+
+
+def test_start_services_starts_gmail_watcher_when_configured(pebble_home, monkeypatch):
+    import pebble_engine
+    import modules
+    import modules.gmail as gmail_mod
+
+    started = []
+
+    class _FakeWatcher:
+        def __init__(self, **kw):
+            self.kw = kw
+        def start(self):
+            started.append(self.kw)
+        def stop(self):
+            pass
+
+    class _GmailMod:
+        name = 'gmail'
+        cfg = {'important_senders': 'boss@x.com, prof@y.edu'}
+
+    monkeypatch.setattr(gmail_mod, 'GmailWatcherThread', _FakeWatcher)
+    monkeypatch.setattr(modules, 'get_active_modules', lambda: [_GmailMod()])
+
+    eng = pebble_engine.PebbleEngine()
+    eng._start_gmail_watcher(eng._active_modules())
+    assert started
+    assert 'boss@x.com' in started[0]['important_senders']
+    assert eng._watchers and callable(started[0]['on_notification'])
+
+
+def test_start_services_starts_watchers_even_if_dispatcher_start_fails(pebble_home, monkeypatch):
+    """Parity with the old per-block isolation: a dispatcher/start() failure must
+    not skip the Gmail/Slack watchers + proactive engine."""
+    import pebble_engine
+    eng = pebble_engine.PebbleEngine()
+
+    def _boom():
+        raise RuntimeError('dispatcher start failed')
+
+    called = []
+    monkeypatch.setattr(eng, 'start', _boom)
+    monkeypatch.setattr(eng, '_start_watchers', lambda: called.append('w'))
+    monkeypatch.setattr(eng, '_start_proactive', lambda: called.append('p'))
+    eng.start_services()  # must not raise
+    assert called == ['w', 'p']
+
+
+def test_stop_stops_watchers(pebble_home):
+    import pebble_engine
+    stopped = []
+
+    class _W:
+        def start(self): pass
+        def stop(self): stopped.append(True)
+
+    eng = pebble_engine.PebbleEngine()
+    eng._watchers.append(_W())
+    eng.start()
+    eng.stop()
+    assert stopped == [True]
+
+
 def test_engine_restart_does_not_double_subscribe(pebble_home):
     """stop()/start() must not re-subscribe the dispatcher (which would double
     every notification)."""

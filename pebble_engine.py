@@ -41,6 +41,8 @@ class PebbleEngine:
         self._flush_interval = self.FLUSH_INTERVAL
         self._flush_stop = threading.Event()
         self._flush_thread: threading.Thread | None = None
+        self._watchers: list = []   # Gmail/Slack watcher threads
+        self._proactive = None      # ProactiveEngine (publish-only)
 
     # ── module registry ─────────────────────────────────────────────────────────
 
@@ -148,4 +150,110 @@ class PebbleEngine:
 
     def stop(self) -> None:
         self._flush_stop.set()
+        for w in self._watchers:
+            try:
+                w.stop()
+            except Exception:
+                pass
+        if self._proactive is not None:
+            try:
+                self._proactive.stop()
+            except Exception:
+                pass
         self._started = False
+
+    # ── background services (headless watcher supervision) ──────────────────────
+
+    def start_services(self) -> None:
+        """Start the dispatcher + Gmail/Slack watchers + proactive engine. Watchers
+        publish to the bus; the dispatcher renders via the injected notifier. A
+        headless client gets the same background services — the Windows shell only
+        supplies the notifier."""
+        # Each stage is isolated so one failure doesn't skip the others (parity
+        # with the old main.py, which guarded engine/gmail/slack/proactive
+        # separately).
+        try:
+            self.start()
+        except Exception:
+            pass
+        self._start_watchers()
+        self._start_proactive()
+
+    def _active_modules(self) -> list:
+        try:
+            from modules import get_active_modules
+            return get_active_modules()
+        except Exception:
+            return []
+
+    def _start_watchers(self) -> None:
+        active = self._active_modules()
+        self._start_gmail_watcher(active)
+        self._start_slack_watchers(active)
+
+    def _start_gmail_watcher(self, active: list) -> None:
+        try:
+            from modules.gmail import GmailWatcherThread
+            from events import bus, EMAIL_RECEIVED_IMPORTANT
+        except Exception:
+            return
+        try:
+            mod = next((m for m in active if getattr(m, 'name', '') == 'gmail'), None)
+            if mod is None:
+                return
+            senders = [s.strip() for s in (mod.cfg.get('important_senders', '') or '').split(',') if s.strip()]
+            if not senders:
+                return
+            w = GmailWatcherThread(
+                important_senders=senders,
+                on_notification=lambda info: bus.publish(EMAIL_RECEIVED_IMPORTANT, info),
+            )
+            w.start()
+            self._watchers.append(w)
+        except Exception:
+            pass
+
+    def _start_slack_watchers(self, active: list) -> None:
+        try:
+            from modules.slack_module import SlackWatcherThread
+            from events import bus, SLACK_MESSAGE_IMPORTANT
+        except Exception:
+            return
+        try:
+            mod = next((m for m in active if getattr(m, 'name', '') == 'slack'), None)
+            if mod is None:
+                return
+            cfg = mod.cfg
+            publish = lambda info: bus.publish(SLACK_MESSAGE_IMPORTANT, info)  # noqa: E731
+
+            def _channels(raw):
+                return [c.strip().lstrip('#') for c in (raw or '').split(',') if c.strip()]
+
+            workspaces = cfg.get('workspaces', {}) or {}
+            if workspaces:
+                for ws_name, ws_cfg in workspaces.items():
+                    token = (ws_cfg.get('access_token') or '').strip()
+                    channels = _channels(ws_cfg.get('important_channels', ''))
+                    if not (token and channels):
+                        continue
+                    w = SlackWatcherThread(token=token, channels=channels,
+                                           on_notification=publish, workspace_label=ws_name)
+                    w.start()
+                    self._watchers.append(w)
+            else:
+                token = (cfg.get('bot_token', '') or '').strip()
+                channels = _channels(cfg.get('important_channels', ''))
+                if token and channels:
+                    w = SlackWatcherThread(token=token, channels=channels, on_notification=publish)
+                    w.start()
+                    self._watchers.append(w)
+        except Exception:
+            pass
+
+    def _start_proactive(self) -> None:
+        try:
+            from proactive_engine import ProactiveEngine
+            self._proactive = ProactiveEngine()
+            self._proactive.start()
+        except Exception:
+            pass
