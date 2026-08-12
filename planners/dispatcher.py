@@ -302,7 +302,12 @@ class NotificationDispatcher:
     def _fire(self, notif: Notification) -> None:
         if notif.dedup_key:
             self._dedup_seen.add(notif.dedup_key)
-        self._fire_log.append(self._clock())
+        # Only NON-critical fires consume the rate-limit budget. Criticals are
+        # exempt (they bypass the limit in submit), so they must NOT be logged
+        # here — otherwise every critical opens a 10-min blackout in which queued
+        # non-critical notifications can never drain (they'd be lost on quit).
+        if notif.urgency != 'critical':
+            self._fire_log.append(self._clock())
         self._fired_count += 1
         metrics.emit('notification.fired', {
             'kind':      notif.kind,

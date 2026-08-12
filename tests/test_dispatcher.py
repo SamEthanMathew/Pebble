@@ -60,6 +60,23 @@ def test_rate_limit_queues_excess(pebble_home):
     assert d.fired_count() == 2
 
 
+def test_critical_fire_does_not_consume_noncritical_rate_budget(pebble_home):
+    """A critical notification must NOT poison the non-critical rate window —
+    otherwise (with reminders/meeting-prep/calendar all critical now) queued
+    non-critical notifications would never drain and be lost."""
+    from planners.dispatcher import NotificationDispatcher, Notification
+    t = [1000.0]
+    popup = _CapturePopup()
+    d = NotificationDispatcher(popup_fn=popup, max_per_10min=1,
+                               quiet_hours_start='99:99', quiet_hours_end='99:99',
+                               clock=lambda: t[0])
+    # a critical fires but must not consume the single non-critical slot
+    assert d.submit(Notification(title='C', body='', urgency='critical')) == 'fired'
+    # ... so a following normal notification still fires immediately
+    assert d.submit(Notification(title='N', body='', urgency='normal')) == 'fired'
+    assert d.fired_count() == 2
+
+
 def test_critical_bypasses_rate_limit(pebble_home):
     from planners.dispatcher import NotificationDispatcher, Notification
     popup = _FakePopup()
