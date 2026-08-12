@@ -76,15 +76,27 @@ class PebbleAPI:
         if not self._token:
             return None  # no token configured -> trusted in-process use
         # DNS-rebinding defense: a rebound request carries Host: attacker.com.
-        host = self._header(headers, 'Host') or ''
-        hostname = host.rsplit(':', 1)[0].strip().strip('[]').lower() if host else ''
-        if hostname and hostname not in self._LOOPBACK_HOSTS:
+        if (hostname := self._hostname(headers)) and hostname not in self._LOOPBACK_HOSTS:
             return 403, {'error': 'forbidden host'}
-        # Bearer token: a browser page cannot read the token file, so this defeats
-        # CSRF; and only same-user local processes can read it.
-        if self._header(headers, 'Authorization') != f'Bearer {self._token}':
+        # Bearer token (constant-time compare): a browser page cannot read the
+        # token file, so this defeats CSRF; only same-user local processes can.
+        import secrets
+        got = self._header(headers, 'Authorization') or ''
+        if not secrets.compare_digest(got, f'Bearer {self._token}'):
             return 401, {'error': 'unauthorized'}
         return None
+
+    @classmethod
+    def _hostname(cls, headers: dict) -> str:
+        """Extract the bare hostname from the Host header, handling bracketed
+        IPv6 (`[::1]` / `[::1]:8765`) and `host:port`."""
+        host = (cls._header(headers, 'Host') or '').strip()
+        if not host:
+            return ''
+        if host.startswith('['):            # [::1] or [::1]:port
+            end = host.find(']')
+            return host[1:end].lower() if end != -1 else host.lower()
+        return host.rsplit(':', 1)[0].lower()
 
     @staticmethod
     def _header(headers: dict, name: str) -> str | None:

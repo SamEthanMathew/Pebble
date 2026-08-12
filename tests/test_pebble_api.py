@@ -134,6 +134,15 @@ def test_valid_bearer_and_loopback_host_is_authorized(pebble_home):
     assert status == 200
 
 
+def test_bracketed_ipv6_loopback_host_is_authorized(pebble_home):
+    """[::1] and [::1]:port must parse to ::1 (a loopback host), not be rejected."""
+    api = _tok_api()
+    for host in ('[::1]', '[::1]:8765'):
+        status, _ = api.handle('GET', '/status',
+                               headers={'Host': host, 'Authorization': 'Bearer sekret'})
+        assert status == 200, host
+
+
 def test_server_rejects_malformed_content_length(pebble_home):
     """A bad Content-Length must not crash/hang the handler (Content-Length DoS)."""
     import socket
