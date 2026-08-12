@@ -240,9 +240,29 @@ class NotificationDispatcher:
                 urgency='normal', kind='focus_catchup',
             ))
 
+    # User-facing planners get a completion popup; internal state-doc planners
+    # (schedule/wrapup) stay silent so we don't spam the user with plumbing.
+    _PLANNER_NOTIFY = {
+        'morning':   ('☀️ Morning briefing ready', 'Your day is planned — open to see it.'),
+        'comms':     ('✉️ Draft replies ready',    'Pebble drafted replies for you to review.'),
+        'exam_prep': ('📚 Study plan ready',        'Your exam-prep plan is ready.'),
+        'school':    ('🎓 School update',           'Deadlines and study plan updated.'),
+    }
+
     def _on_planner_completed(self, payload: dict[str, Any]) -> None:
-        # Phase 4 will use this for morning briefing dispatch. For now: no-op.
-        pass
+        if payload.get('was_skipped'):
+            return
+        name = payload.get('planner', '')
+        spec = self._PLANNER_NOTIFY.get(name)
+        if not spec:
+            return
+        title, body = spec
+        self.submit(Notification(
+            title=title, body=body, urgency='normal', kind=f'planner:{name}',
+            dedup_key=f'planner:{name}:{datetime.date.today().isoformat()}',
+            buttons=[{'label': 'Open', 'action': 'open_chat', 'style': 'primary'},
+                     dict(_DISMISS)],
+        ))
 
     # ── gating helpers ──────────────────────────────────────────────────────
 

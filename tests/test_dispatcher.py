@@ -206,6 +206,35 @@ def test_notifications_carry_button_action_specs(pebble_home):
     bus.clear()
 
 
+def test_planner_completed_surfaces_user_facing_notification(pebble_home):
+    from events import bus, PLANNER_COMPLETED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(PLANNER_COMPLETED,
+                {'planner': 'morning', 'state_doc': 'x.json', 'was_skipped': False})
+    assert popup.calls and 'briefing' in popup.calls[-1]['title'].lower()
+    bus.clear()
+
+
+def test_planner_completed_skipped_is_silent(pebble_home):
+    from events import bus, PLANNER_COMPLETED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(PLANNER_COMPLETED, {'planner': 'morning', 'was_skipped': True})
+    assert not popup.calls
+    bus.clear()
+
+
+def test_internal_planner_completion_is_silent(pebble_home):
+    """Internal planners (schedule/school state docs) shouldn't pop up."""
+    from events import bus, PLANNER_COMPLETED
+    popup = _CapturePopup()
+    _open_dispatcher(popup)
+    bus.publish(PLANNER_COMPLETED, {'planner': 'schedule', 'was_skipped': False})
+    assert not popup.calls
+    bus.clear()
+
+
 def test_dispatcher_emits_metrics(pebble_home):
     """Submitting a fired notification writes a metrics row."""
     import metrics

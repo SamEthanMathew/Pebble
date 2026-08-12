@@ -72,3 +72,27 @@ def test_engine_exposes_active_modules_and_autonomy(pebble_home):
     eng = pebble_engine.PebbleEngine()
     assert isinstance(eng.modules(), list)
     assert isinstance(eng.make_autonomy(), Autonomy)
+
+
+def test_engine_owns_single_autonomy_and_approvals_funnel(pebble_home):
+    """P0-3: one shared Autonomy + ApprovalQueue own the write funnel, and the
+    engine exposes the approvals-inbox API a UI will drive."""
+    import pebble_engine
+    from autonomy import Autonomy
+    from approval_queue import ApprovalQueue
+
+    eng = pebble_engine.PebbleEngine()
+    assert isinstance(eng.autonomy, Autonomy)
+    assert eng.autonomy is eng.autonomy          # single shared instance
+    assert isinstance(eng.approvals, ApprovalQueue)
+    assert eng.approvals is eng.approvals
+    # inbox API starts empty
+    assert eng.pending_approvals() == {}
+    assert eng.queued_sends() == []
+
+
+def test_engine_approve_unknown_proposal_is_safe(pebble_home):
+    import pebble_engine
+    eng = pebble_engine.PebbleEngine()
+    res = eng.approve('does-not-exist')
+    assert res.status == 'error'
