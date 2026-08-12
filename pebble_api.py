@@ -16,13 +16,30 @@ from typing import Any
 
 
 class PebbleAPI:
-    """Transport-agnostic request router. `handle(method, path, body) -> (status, dict)`."""
+    """Transport-agnostic request router. `handle(method, path, body, headers) ->
+    (status, dict)`.
 
-    def __init__(self, engine) -> None:
+    When constructed with a `token`, every request must present
+    `Authorization: Bearer <token>` and a loopback `Host` header — this defeats
+    CSRF/DNS-rebinding from a browser and restricts to same-user local processes
+    that can read the token file. With no token (in-process/tests) the router is
+    open. `serve()` always sets a token, so the network-exposed path is never open.
+    """
+
+    _LOOPBACK_HOSTS = {'127.0.0.1', 'localhost', '::1'}
+
+    def __init__(self, engine, *, token: str | None = None) -> None:
         self._engine = engine
+        self._token = token
 
-    def handle(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    def handle(self, method: str, path: str, body: dict | None = None,
+               headers: dict | None = None) -> tuple[int, dict]:
         method = (method or 'GET').upper()
+
+        denied = self._authorize(headers or {})
+        if denied is not None:
+            return denied
+
         parts = [p for p in path.split('?', 1)[0].strip('/').split('/') if p]
 
         if method == 'GET' and parts == ['health']:
@@ -52,6 +69,30 @@ class PebbleAPI:
                 return 200, {'ok': bool(self._engine.send_now(ident))}
 
         return 404, {'error': 'not found', 'method': method, 'path': path}
+
+    # ── auth / anti-CSRF ────────────────────────────────────────────────────────
+
+    def _authorize(self, headers: dict) -> tuple[int, dict] | None:
+        if not self._token:
+            return None  # no token configured -> trusted in-process use
+        # DNS-rebinding defense: a rebound request carries Host: attacker.com.
+        host = self._header(headers, 'Host') or ''
+        hostname = host.rsplit(':', 1)[0].strip().strip('[]').lower() if host else ''
+        if hostname and hostname not in self._LOOPBACK_HOSTS:
+            return 403, {'error': 'forbidden host'}
+        # Bearer token: a browser page cannot read the token file, so this defeats
+        # CSRF; and only same-user local processes can read it.
+        if self._header(headers, 'Authorization') != f'Bearer {self._token}':
+            return 401, {'error': 'unauthorized'}
+        return None
+
+    @staticmethod
+    def _header(headers: dict, name: str) -> str | None:
+        low = name.lower()
+        for k, v in headers.items():
+            if str(k).lower() == low:
+                return v
+        return None
 
     # ── serialization (JSON-safe; never leak the QueuedSend.fn callable) ────────
 
@@ -87,40 +128,78 @@ class PebbleAPI:
         }
 
 
-def serve(engine, host: str = '127.0.0.1', port: int = 8765):
-    """Return a ThreadingHTTPServer serving the API — bound to loopback ONLY.
+_MAX_BODY = 1 << 20  # 1 MiB cap on request bodies
 
-    Caller runs `.serve_forever()` (typically on a daemon thread) and `.shutdown()`.
-    """
+
+def token_path():
+    import paths
+    return paths.data_dir() / 'api_token'
+
+
+def _write_token_file(token: str) -> None:
+    import os
+    p = token_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(token, encoding='utf-8')
+    try:
+        os.chmod(p, 0o600)  # best-effort (Windows ACLs already scope to the user)
+    except OSError:
+        pass
+
+
+def serve(engine, host: str = '127.0.0.1', port: int = 8765, token: str | None = None):
+    """Return a ThreadingHTTPServer serving the API — bound to loopback ONLY, and
+    authenticated: a per-session bearer token is generated (unless supplied) and
+    written to ~/.pebble/api_token for the trusted local client. The token is also
+    on `server.pebble_token`. Caller runs `.serve_forever()` then `.shutdown()`."""
     import json
+    import secrets
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    api = PebbleAPI(engine)
+    if token is None:
+        token = secrets.token_urlsafe(32)
+        _write_token_file(token)
+    api = PebbleAPI(engine, token=token)
 
     class _Handler(BaseHTTPRequestHandler):
-        def _dispatch(self, method: str) -> None:
-            body = None
-            if method == 'POST':
-                n = int(self.headers.get('Content-Length', 0) or 0)
-                raw = self.rfile.read(n) if n else b''
-                try:
-                    body = json.loads(raw) if raw else None
-                except Exception:
-                    body = None
+        def _reply(self, status: int, payload: dict) -> None:
             try:
-                status, payload = api.handle(method, self.path, body)
-            except Exception as e:
-                status, payload = 500, {'error': str(e)}
-            data = json.dumps(payload, default=str).encode('utf-8')
+                data = json.dumps(payload).encode('utf-8')  # no default=: fail loud
+            except TypeError:
+                status, data = 500, b'{"error":"serialization"}'
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
             self.wfile.write(data)
 
+        def _dispatch(self, method: str) -> None:
+            body = None
+            if method == 'POST':
+                try:
+                    n = int(self.headers.get('Content-Length', 0) or 0)
+                except (TypeError, ValueError):
+                    return self._reply(400, {'error': 'bad content-length'})
+                if n < 0:
+                    return self._reply(400, {'error': 'bad content-length'})
+                raw = self.rfile.read(min(n, _MAX_BODY)) if n else b''
+                if raw:
+                    try:
+                        body = json.loads(raw)
+                    except Exception:
+                        body = None
+            headers = {k: v for k, v in self.headers.items()}
+            try:
+                status, payload = api.handle(method, self.path, body, headers)
+            except Exception as e:
+                status, payload = 500, {'error': str(e)}
+            self._reply(status, payload)
+
         def do_GET(self):  self._dispatch('GET')
         def do_POST(self): self._dispatch('POST')
         def log_message(self, *a):  # keep stdout/stderr quiet
             pass
 
-    return ThreadingHTTPServer((host, port), _Handler)
+    srv = ThreadingHTTPServer((host, port), _Handler)
+    srv.pebble_token = token  # expose for the trusted in-process client
+    return srv

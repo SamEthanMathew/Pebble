@@ -71,9 +71,87 @@ def test_unknown_route_is_404(pebble_home):
 
 
 def test_router_is_json_serializable(pebble_home):
-    """Every response body must be JSON-serializable (no QueuedSend.fn callable)."""
+    """Every response body must be PURE JSON — no default=str masking a leaked
+    QueuedSend.fn callable (that would emit a stringified pointer over the wire)."""
     import json
     api = _api()
     for method, path in [('GET', '/health'), ('GET', '/status'), ('GET', '/approvals')]:
         _, body = api.handle(method, path)
-        json.dumps(body, default=str)  # must not raise
+        json.dumps(body)  # NO default= : a non-JSON value must raise, not stringify
+
+
+def test_queued_send_serialized_without_fn_callable(pebble_home):
+    import json
+    import pebble_api
+    import pebble_engine
+    eng = pebble_engine.PebbleEngine()
+    sid = eng.approvals.enqueue(lambda: None, label='Gmail send to x@y')
+    try:
+        status, body = pebble_api.PebbleAPI(eng).handle('GET', '/approvals')
+        assert status == 200
+        sends = body['sends']
+        assert sends and sends[0]['label'] == 'Gmail send to x@y'
+        assert 'fn' not in sends[0]        # never leak the callable
+        json.dumps(body)                   # pure JSON
+    finally:
+        eng.approvals.cancel(sid)          # stop the send Timer so pytest can exit
+
+
+# ── auth / anti-CSRF (only enforced when a token is configured, i.e. serve()) ──
+
+def _tok_api(pebble_home_noop=None, token='sekret'):
+    import pebble_api
+    import pebble_engine
+    return pebble_api.PebbleAPI(pebble_engine.PebbleEngine(), token=token)
+
+
+def test_no_token_means_open_for_in_process_use(pebble_home):
+    status, _ = _api().handle('GET', '/status', headers={})   # no token -> open
+    assert status == 200
+
+
+def test_missing_or_wrong_bearer_is_unauthorized(pebble_home):
+    api = _tok_api()
+    assert api.handle('GET', '/status', headers={'Host': '127.0.0.1:8765'})[0] == 401
+    assert api.handle('GET', '/status',
+                      headers={'Host': '127.0.0.1:8765',
+                               'Authorization': 'Bearer wrong'})[0] == 401
+
+
+def test_nonloopback_host_is_forbidden_defeats_dns_rebinding(pebble_home):
+    api = _tok_api()
+    status, _ = api.handle('POST', '/approvals/send/x/now',
+                           headers={'Host': 'attacker.com',
+                                    'Authorization': 'Bearer sekret'})
+    assert status == 403
+
+
+def test_valid_bearer_and_loopback_host_is_authorized(pebble_home):
+    api = _tok_api()
+    status, _ = api.handle('GET', '/status',
+                           headers={'Host': 'localhost:8765',
+                                    'Authorization': 'Bearer sekret'})
+    assert status == 200
+
+
+def test_server_rejects_malformed_content_length(pebble_home):
+    """A bad Content-Length must not crash/hang the handler (Content-Length DoS)."""
+    import socket
+    import threading
+    import pebble_api
+    import pebble_engine
+    srv = pebble_api.serve(pebble_engine.PebbleEngine(), port=8794)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        s = socket.create_connection(('127.0.0.1', 8794), timeout=3)
+        req = (b'POST /approvals/proposal/x/approve HTTP/1.1\r\n'
+               b'Host: 127.0.0.1:8794\r\n'
+               b'Content-Length: not-a-number\r\n\r\n')
+        s.sendall(req)
+        s.settimeout(3)
+        first_line = s.recv(4096).split(b'\r\n', 1)[0]
+        assert b'400' in first_line   # rejected cleanly, no crash/hang
+        s.close()
+    finally:
+        srv.shutdown()
